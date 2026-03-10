@@ -200,6 +200,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
 }
 
 .page-header h1 {
@@ -209,24 +211,51 @@ onMounted(() => {
 
 .search-input {
   width: 300px;
+  max-width: 100%;
 }
 
+/* 响应式筛选区域 */
 .filter-card {
   margin-bottom: 20px;
 }
 
+.filter-card :deep(.el-row) {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+.filter-card :deep(.el-col) {
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+  margin-bottom: 10px;
+}
+
+.filter-card :deep(.el-select),
+.filter-card :deep(.el-input-number) {
+  width: 100%;
+}
+
+/* 响应式网格 */
 .items-grid {
   min-height: 400px;
 }
 
-.item-card {
+.items-grid :deep(.el-col) {
+  padding-left: 10px !important;
+  padding-right: 10px !important;
   margin-bottom: 20px;
+}
+
+.item-card {
+  margin-bottom: 0;
   cursor: pointer;
+  transition: all 0.3s ease;
+  height: 100%;
 }
 
 .item-card:hover {
   transform: translateY(-5px);
-  transition: all 0.3s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .item-image {
@@ -242,6 +271,7 @@ onMounted(() => {
 .item-image img {
   max-width: 100%;
   max-height: 100%;
+  object-fit: contain;
 }
 
 .item-info {
@@ -275,6 +305,7 @@ onMounted(() => {
 .buff-price {
   color: #f56c6c;
   font-weight: bold;
+  font-size: 16px;
 }
 
 .steam-price {
@@ -291,11 +322,110 @@ onMounted(() => {
 .item-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.item-actions .el-button {
+  flex: 1;
+  min-width: 60px;
 }
 
 .pagination {
   margin-top: 20px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* 响应式断点样式 */
+@media (max-width: 768px) {
+  .market-page {
+    padding: 10px;
+  }
+  
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .page-header h1 {
+    font-size: 20px;
+    text-align: center;
+  }
+  
+  .search-input {
+    width: 100%;
+  }
+  
+  .filter-card :deep(.el-col) {
+    width: 100% !important;
+  }
+  
+  .item-image {
+    height: 120px;
+  }
+  
+  .item-name {
+    font-size: 13px;
+  }
+  
+  .buff-price {
+    font-size: 14px;
+  }
+  
+  .pagination :deep(.el-pagination) {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-header {
+    margin-bottom: 10px;
+  }
+  
+  .items-grid :deep(.el-col) {
+    width: 100% !important;
+  }
+  
+  .item-card {
+    display: flex;
+    flex-direction: row;
+  }
+  
+  .item-card :deep(.el-card__body) {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+  }
+  
+  .item-image {
+    width: 80px;
+    height: 80px;
+    flex-shrink: 0;
+  }
+  
+  .item-info {
+    flex: 1;
+    padding: 0 0 0 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  
+  .item-name,
+  .item-market-name {
+    white-space: normal;
+    text-overflow: initial;
+  }
+  
+  .item-actions {
+    flex-direction: column;
+    gap: 5px;
+  }
+  
+  .item-actions .el-button {
+    width: 100%;
+  }
 }
 </style>

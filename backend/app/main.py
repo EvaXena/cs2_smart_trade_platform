@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.core.encryption import encryption_manager
+from app.core.logging_config import init_logging
+from app.core.exceptions import register_error_handlers
 from app.api.v1.router import api_router
 from app.api.v1.endpoints.monitoring import metrics_middleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -20,6 +22,9 @@ from app.middleware.audit import audit_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 初始化日志配置
+    init_logging()
+    
     # 启动时初始化加密模块
     encryption_manager.initialize()
     
@@ -68,6 +73,9 @@ def create_app() -> FastAPI:
 
     # 添加审计日志中间件
     app.middleware("http")(audit_middleware)
+    
+    # 注册错误处理器
+    register_error_handlers(app)
 
     @app.get("/")
     async def root():

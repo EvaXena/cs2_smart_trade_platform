@@ -320,6 +320,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
 }
 
 .page-header h1 {
@@ -327,7 +329,24 @@ onMounted(() => {
   font-size: 24px;
 }
 
+.page-header .header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .overview-cards {
+  margin-bottom: 20px;
+}
+
+.overview-cards :deep(.el-row) {
+  margin-left: -10px !important;
+  margin-right: -10px !important;
+}
+
+.overview-cards :deep(.el-col) {
+  padding-left: 10px !important;
+  padding-right: 10px !important;
   margin-bottom: 20px;
 }
 
@@ -346,10 +365,12 @@ onMounted(() => {
   justify-content: center;
   color: white;
   font-size: 24px;
+  flex-shrink: 0;
 }
 
 .stat-content {
   flex: 1;
+  min-width: 0;
 }
 
 .stat-label {
@@ -361,10 +382,12 @@ onMounted(() => {
 .stat-value {
   font-size: 24px;
   font-weight: bold;
+  word-break: break-all;
 }
 
 .chart-card {
   min-height: 300px;
+  margin-bottom: 20px;
 }
 
 .chart-placeholder {
@@ -386,5 +409,80 @@ onMounted(() => {
 
 .card-header {
   font-weight: bold;
+}
+
+/* 响应式断点 */
+@media (max-width: 1200px) {
+  .overview-cards :deep(.el-col) {
+    width: 50%;
+  }
+}
+
+@media (max-width: 768px) {
+  .stats-page {
+    padding: 10px;
+  }
+  
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .page-header h1 {
+    font-size: 20px;
+    text-align: center;
+  }
+  
+  .overview-cards :deep(.el-col) {
+    width: 100%;
+  }
+  
+  .stat-card {
+    flex-direction: row;
+    text-align: left;
+  }
+  
+  .stat-icon {
+    width: 50px;
+    height: 50px;
+    font-size: 20px;
+  }
+  
+  .stat-value {
+    font-size: 20px;
+  }
+  
+  /* 图表区域在移动端全宽 */
+  :deep(.el-row > .el-col) {
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .stat-card {
+    gap: 12px;
+  }
+  
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+  
+  .stat-label {
+    font-size: 12px;
+  }
+  
+  .stat-value {
+    font-size: 18px;
+  }
+  
+  .chart-card {
+    min-height: 250px;
+  }
+  
+  .chart-placeholder {
+    height: 200px;
+  }
 }
 </style>

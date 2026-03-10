@@ -3,13 +3,13 @@
 饰品端点
 """
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, func
-from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.exceptions import NotFoundError
 from app.models.user import User
 from app.models.item import Item, PriceHistory
 from app.schemas.item import (
@@ -143,10 +143,7 @@ async def get_item(
     item = result.scalar_one_or_none()
     
     if not item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="饰品不存在"
-        )
+        raise NotFoundError("饰品", item_id)
     
     return item
 
@@ -167,10 +164,7 @@ async def get_price_history(
     )
     item = result.scalar_one_or_none()
     if not item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="饰品不存在"
-        )
+        raise NotFoundError("饰品", item_id)
     
     # 查询价格历史
     query = select(PriceHistory).where(
@@ -205,10 +199,7 @@ async def get_price_overview(
     item = result.scalar_one_or_none()
     
     if not item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="饰品不存在"
-        )
+        raise NotFoundError("饰品", item_id)
     
     # 计算搬砖利润
     arbitrage_profit = None

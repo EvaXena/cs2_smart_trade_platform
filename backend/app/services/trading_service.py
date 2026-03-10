@@ -16,63 +16,17 @@ from app.models.inventory import Inventory
 from app.services.buff_service import get_buff_client
 from app.services.steam_service import SteamAPI, get_steam_api
 from app.core.config import settings
+# 导入 validators 中的验证函数
+from app.utils.validators import (
+    validate_price as validator_validate_price,
+    validate_quantity as validator_validate_quantity,
+    validate_item_id as validator_validate_item_id,
+    validate_user_id as validator_validate_user_id,
+    validate_min_profit as validator_validate_min_profit,
+    validate_limit as validator_validate_limit,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# 输入验证常量
-MIN_PRICE = 0.01       # 最低价格
-MAX_PRICE = 100000.0   # 最高价格
-MIN_QUANTITY = 1       # 最低数量
-MAX_QUANTITY = 1000    # 最高数量
-
-
-def validate_price(price: float, param_name: str = "price") -> None:
-    """验证价格参数"""
-    if not isinstance(price, (int, float)):
-        raise ValueError(f"{param_name} 必须是数字类型")
-    if price < MIN_PRICE:
-        raise ValueError(f"{param_name} 不能低于 {MIN_PRICE}")
-    if price > MAX_PRICE:
-        raise ValueError(f"{param_name} 不能超过 {MAX_PRICE}")
-
-
-def validate_quantity(quantity: int, param_name: str = "quantity") -> None:
-    """验证数量参数"""
-    if not isinstance(quantity, int):
-        raise ValueError(f"{param_name} 必须是整数类型")
-    if quantity < MIN_QUANTITY:
-        raise ValueError(f"{param_name} 不能低于 {MIN_QUANTITY}")
-    if quantity > MAX_QUANTITY:
-        raise ValueError(f"{param_name} 不能超过 {MAX_QUANTITY}")
-
-
-def validate_item_id(item_id: int) -> None:
-    """验证物品ID"""
-    if not isinstance(item_id, int) or item_id <= 0:
-        raise ValueError("item_id 必须是正整数")
-
-
-def validate_user_id(user_id: int) -> None:
-    """验证用户ID"""
-    if not isinstance(user_id, int) or user_id <= 0:
-        raise ValueError("user_id 必须是正整数")
-
-
-def validate_min_profit(min_profit: float) -> None:
-    """验证最小利润"""
-    if not isinstance(min_profit, (int, float)):
-        raise ValueError("min_profit 必须是数字类型")
-    if min_profit < 0:
-        raise ValueError("min_profit 不能为负数")
-
-
-def validate_limit(limit: int) -> None:
-    """验证返回数量限制"""
-    if not isinstance(limit, int) or limit <= 0:
-        raise ValueError("limit 必须是正整数")
-    if limit > 1000:
-        raise ValueError("limit 不能超过 1000")
 
 
 class TradingEngine:
@@ -93,9 +47,9 @@ class TradingEngine:
         limit: int = 20
     ) -> List[Dict[str, Any]]:
         """获取搬砖机会"""
-        # 输入验证
-        validate_min_profit(min_profit)
-        validate_limit(limit)
+        # 输入验证（使用 validators.py 中的函数）
+        validator_validate_min_profit(min_profit)
+        validator_validate_limit(limit)
         
         # 查询所有饰品
         result = await self.db.execute(
@@ -138,11 +92,11 @@ class TradingEngine:
         user_id: int = None
     ) -> Dict[str, Any]:
         """执行买入"""
-        # 输入验证
-        validate_item_id(item_id)
-        validate_price(max_price, "max_price")
-        validate_quantity(quantity)
-        validate_user_id(user_id)
+        # 输入验证（使用 validators.py 中的函数）
+        validator_validate_item_id(item_id)
+        validator_validate_price(max_price, "max_price")
+        validator_validate_quantity(quantity)
+        validator_validate_user_id(user_id)
         
         if not self.buff_client:
             raise Exception("未设置 BUFF 客户端")

@@ -3,12 +3,13 @@
 订单端点
 """
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.exceptions import NotFoundError, BusinessError
 from app.models.user import User
 from app.models.order import Order
 from app.schemas.order import (
@@ -110,10 +111,7 @@ async def get_order(
     order = result.scalar_one_or_none()
     
     if not order:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="订单不存在"
-        )
+        raise NotFoundError("订单", order_id)
     
     return order
 
@@ -133,16 +131,10 @@ async def cancel_order(
     order = result.scalar_one_or_none()
     
     if not order:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="订单不存在"
-        )
+        raise NotFoundError("订单", order_id)
     
     if order.status != "pending":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="只能取消待处理的订单"
-        )
+        raise BusinessError("只能取消待处理的订单")
     
     from datetime import datetime
     order.status = "cancelled"

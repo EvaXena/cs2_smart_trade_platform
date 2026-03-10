@@ -214,23 +214,17 @@ class RedisCache:
             self._redis = None
             self._connected = False
     
-    def get(self, key: str, default: Any = None) -> Optional[Any]:
-        """获取缓存值"""
+    async def aget(self, key: str, default: Any = None) -> Optional[Any]:
+        """异步获取缓存值"""
         if not self._connected:
             return default
         
         try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 在异步环境中需要异步获取
+            redis = self._get_redis()
+            if redis is None:
                 return default
             
-            # 同步获取（用于初始化等场景）
-            import redis
-            r = redis.from_url(self._redis_url, decode_responses=True)
-            value = r.get(key)
-            r.close()
+            value = await redis.get(key)
             
             if value is None:
                 self._misses += 1
@@ -240,9 +234,60 @@ class RedisCache:
             return json.loads(value)
             
         except Exception as e:
+            logger.error(f"Redis async get error: {e}")
+            self._misses += 1
+            return default
+    
+    def get(self, key: str, default: Any = None) -> Optional[Any]:
+        """获取缓存值（同步版本，用于非异步环境）"""
+        if not self._connected:
+            return default
+        
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 在异步环境中，需要调用异步版本
+                import warnings
+                warnings.warn(
+                    "Synchronous cache.get() called in async context. "
+                    "Use cache.agest() for async access.",
+                    DeprecationWarning,
+                    stacklevel=2
+                )
+                # 回退：创建新的事件循环来执行
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(self._sync_get, key)
+                    return future.result(timeout=5)
+            
+            # 同步获取（用于初始化等场景）
+            return self._sync_get(key)
+            
+        except Exception as e:
             logger.error(f"Redis get error: {e}")
             self._misses += 1
             return default
+    
+    def _sync_get(self, key: str) -> Any:
+        """同步获取缓存值的内部方法"""
+        try:
+            import redis
+            r = redis.from_url(self._redis_url, decode_responses=True)
+            value = r.get(key)
+            r.close()
+            
+            if value is None:
+                self._misses += 1
+                return None
+            
+            self._hits += 1
+            return json.loads(value)
+            
+        except Exception as e:
+            logger.error(f"Redis sync get error: {e}")
+            self._misses += 1
+            return None
     
     def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """设置缓存值"""
@@ -348,6 +393,20 @@ class CacheManager:
         """获取当前使用的后端"""
         return self._current_backend
     
+    async def aget(self, key: str, default: Any = None) -> Any:
+        """异步获取缓存值"""
+        if self._current_backend == CacheBackend.REDIS and self._redis_cache:
+            try:
+                return await self._redis_cache.aget(key, default)
+            except Exception as e:
+                logger.error(f"Redis async get failed, falling back to memory: {e}")
+                if self._fallback_to_memory:
+                    return self._memory_cache.get(key, default)
+                raise
+        
+        # 内存缓存的同步 get 方法在异步上下文中也可安全使用
+        return self._memory_cache.get(key, default)
+    
     def get(self, key: str, default: Any = None) -> Any:
         """获取缓存值"""
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
@@ -424,6 +483,35 @@ class CacheManager:
         if self._current_backend == CacheBackend.MEMORY:
             return self._memory_cache.keys()
         return []  # Redis 不支持 keys 操作
+    
+    # ============ 集群支持方法 ============
+    
+    def set_node_id(self, node_id: str) -> None:
+        """设置当前节点ID（用于集群环境）"""
+        self._memory_cache.set_node_id(node_id)
+        logger.info(f"Cache node ID set to: {node_id}")
+    
+    def get_node_id(self) -> str:
+        """获取当前节点ID"""
+        return self._memory_cache.get_node_id()
+    
+    def register_to_cluster(self, other_cache: 'CacheManager') -> None:
+        """注册到集群（与其他缓存节点同步）"""
+        if self._current_backend == CacheBackend.MEMORY and other_cache._current_backend == CacheBackend.MEMORY:
+            self._memory_cache.subscribe(other_cache._memory_cache)
+            logger.info(f"Registered to cluster with node: {other_cache.get_node_id()}")
+    
+    def broadcast_invalidation(self, key: str) -> None:
+        """广播缓存失效通知到集群"""
+        if self._current_backend == CacheBackend.MEMORY:
+            self._memory_cache._notify_subscribers("delete", key)
+            logger.debug(f"Broadcast cache invalidation for key: {key}")
+    
+    def broadcast_clear(self) -> None:
+        """广播缓存清空通知到集群"""
+        if self._current_backend == CacheBackend.MEMORY:
+            self._memory_cache._notify_subscribers("clear", "")
+            logger.debug("Broadcast cache clear to cluster")
 
 
 # 全局缓存实例
@@ -450,6 +538,12 @@ def get_cache() -> CacheManager:
 
 
 # ============ 便捷函数 ============
+
+async def aget(key: str, default: Any = None) -> Any:
+    """异步获取缓存值"""
+    cache = get_cache()
+    return await cache.aget(key, default)
+
 
 def get(key: str, default: Any = None) -> Any:
     """获取缓存值"""
@@ -516,6 +610,10 @@ def set_cached_price(item_id: str, price: Any, ttl: int = PRICE_CACHE_TTL) -> No
 
 class Cache:
     """兼容旧接口的包装类"""
+    
+    @staticmethod
+    async def aget(key: str, default: Any = None) -> Any:
+        return await aget(key, default)
     
     @staticmethod
     def get(key: str, default: Any = None) -> Any:
