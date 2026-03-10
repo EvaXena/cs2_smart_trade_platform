@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # 数据库配置
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cs2trade"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./cs2trade.db"
 
     # Redis 配置
     REDIS_URL: str = "redis://localhost:6379/0"
