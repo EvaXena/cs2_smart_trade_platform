@@ -4,6 +4,7 @@
 """
 import re
 import time
+import json
 import logging
 from datetime import timedelta
 from typing import Dict, Tuple
@@ -35,10 +36,102 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 登录尝试记录: {username: [timestamp1, timestamp2, ...]}
-_login_attempts: Dict[str, list] = {}
-# 锁定账户记录: {username: unlock_timestamp}
-_locked_accounts: Dict[str, float] = {}
+# Redis 配置
+import redis.asyncio as redis
+
+_redis_client: redis.Redis = None
+
+
+async def get_redis_client() -> redis.Redis:
+    """获取 Redis 客户端"""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True
+        )
+    return _redis_client
+
+
+# Redis 键前缀
+_LOGIN_ATTEMPTS_PREFIX = "login:attempts:"
+_LOCKED_ACCOUNTS_PREFIX = "login:locked:"
+MAX_AGE_SECONDS = 900  # 15分钟
+
+
+async def _cleanup_old_attempts(username: str, max_age_seconds: int = 900):
+    """清理旧的登录尝试记录（Redis TTL 自动处理）"""
+    pass  # Redis 通过 TTL 自动清理
+
+
+async def _check_login_attempts(username: str) -> bool:
+    """检查是否超过登录尝试限制"""
+    client = await get_redis_client()
+    current_time = time.time()
+    
+    # 检查是否被锁定
+    locked_key = f"{_LOCKED_ACCOUNTS_PREFIX}{username}"
+    locked_until = await client.get(locked_key)
+    
+    if locked_until:
+        locked_time = float(locked_until)
+        if current_time < locked_time:
+            remaining = int(locked_time - current_time)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登录尝试过多，请 {remaining} 秒后重试"
+            )
+        else:
+            # 解除锁定
+            await client.delete(locked_key)
+            attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
+            await client.delete(attempts_key)
+    
+    # 检查尝试次数
+    attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
+    attempts_data = await client.get(attempts_key)
+    
+    if attempts_data:
+        attempts = json.loads(attempts_data)
+        # 清理过期记录
+        attempts = [ts for ts in attempts if current_time - ts < MAX_AGE_SECONDS]
+        
+        if len(attempts) >= settings.LOGIN_MAX_ATTEMPTS:
+            # 锁定账户
+            lockout_seconds = settings.LOGIN_LOCKOUT_MINUTES * 60
+            locked_until = current_time + lockout_seconds
+            await client.setex(locked_key, lockout_seconds, str(locked_until))
+            
+            # 同时清理尝试记录
+            await client.delete(attempts_key)
+            
+            logger.warning(f"账户 {username} 因登录尝试过多已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登录尝试过多，账户已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟"
+            )
+    
+    return True
+
+
+async def _record_login_attempt(username: str):
+    """记录登录尝试"""
+    client = await get_redis_client()
+    current_time = time.time()
+    
+    attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
+    attempts_data = await client.get(attempts_key)
+    
+    if attempts_data:
+        attempts = json.loads(attempts_data)
+    else:
+        attempts = []
+    
+    attempts.append(current_time)
+    
+    # 保留15分钟内的记录
+    await client.setex(attempts_key, 900, json.dumps(attempts))
 
 
 def validate_password_strength(password: str) -> Tuple[bool, str]:
@@ -78,60 +171,6 @@ def validate_password_strength(password: str) -> Tuple[bool, str]:
         return False, f"密码必须包含至少2种字符类型，当前缺少: {', '.join(missing_types)}"
     
     return True, ""
-
-
-def _cleanup_old_attempts(username: str, max_age_seconds: int = 900):
-    """清理旧的登录尝试记录"""
-    current_time = time.time()
-    if username in _login_attempts:
-        _login_attempts[username] = [
-            ts for ts in _login_attempts[username]
-            if current_time - ts < max_age_seconds
-        ]
-        if not _login_attempts[username]:
-            del _login_attempts[username]
-
-
-def _check_login_attempts(username: str) -> bool:
-    """检查是否超过登录尝试限制"""
-    current_time = time.time()
-    _cleanup_old_attempts(username)
-    
-    # 检查是否被锁定
-    if username in _locked_accounts:
-        if current_time < _locked_accounts[username]:
-            remaining = int(_locked_accounts[username] - current_time)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"登录尝试过多，请 {remaining} 秒后重试"
-            )
-        else:
-            # 解除锁定
-            del _locked_accounts[username]
-            if username in _login_attempts:
-                del _login_attempts[username]
-    
-    # 检查尝试次数
-    if username in _login_attempts:
-        attempts = len(_login_attempts[username])
-        if attempts >= settings.LOGIN_MAX_ATTEMPTS:
-            # 锁定账户
-            _locked_accounts[username] = current_time + (settings.LOGIN_LOCKOUT_MINUTES * 60)
-            logger.warning(f"账户 {username} 因登录尝试过多已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"登录尝试过多，账户已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟"
-            )
-    
-    return True
-
-
-def _record_login_attempt(username: str):
-    """记录登录尝试"""
-    current_time = time.time()
-    if username not in _login_attempts:
-        _login_attempts[username] = []
-    _login_attempts[username].append(current_time)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -191,7 +230,7 @@ async def login(
     username = form_data.username
     
     # 检查登录尝试限制
-    _check_login_attempts(username)
+    await _check_login_attempts(username)
     
     # 查找用户
     result = await db.execute(
@@ -201,7 +240,7 @@ async def login(
     
     if not user or not verify_password(form_data.password, user.hashed_password):
         # 记录失败的登录尝试
-        _record_login_attempt(username)
+        await _record_login_attempt(username)
         logger.warning(f"登录失败: {username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -216,8 +255,9 @@ async def login(
         )
     
     # 登录成功，清除尝试记录
-    if username in _login_attempts:
-        del _login_attempts[username]
+    client = await get_redis_client()
+    attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
+    await client.delete(attempts_key)
     
     # 创建访问令牌
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)

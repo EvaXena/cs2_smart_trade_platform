@@ -36,11 +36,17 @@ class EncryptionManager:
             logger.warning("未设置 ENCRYPTION_KEY，将生成临时密钥（重启后会失效）")
             key = os.urandom(32)
         
+        # 从环境变量获取 salt，如果未设置则使用默认值（仅用于开发环境）
+        salt = os.environ.get("ENCRYPTION_SALT", "cs2_trade_salt_dev").encode()
+        
+        if salt == "cs2_trade_salt_dev".encode():
+            logger.warning("未设置 ENCRYPTION_SALT，使用默认开发用 salt，生产环境应设置唯一的 salt")
+        
         # 使用 PBKDF2 派生密钥
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b"cs2_trade_salt",  # 生产环境应使用随机 salt
+            salt=salt,  # 从环境变量读取
             iterations=480000,
         )
         derived_key = base64.urlsafe_b64encode(kdf.derive(key))
