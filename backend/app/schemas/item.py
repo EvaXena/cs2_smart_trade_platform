@@ -4,7 +4,7 @@
 """
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # ===== 饰品相关 =====
@@ -59,8 +59,7 @@ class ItemInDB(ItemBase):
     updated_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ItemResponse(ItemInDB):
@@ -104,8 +103,7 @@ class PriceHistoryInDB(PriceHistoryBase):
     id: int
     recorded_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PriceHistoryResponse(PriceHistoryInDB):

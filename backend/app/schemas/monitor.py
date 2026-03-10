@@ -62,8 +62,7 @@ class MonitorInDB(MonitorBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MonitorResponse(MonitorInDB):
@@ -91,8 +90,7 @@ class MonitorLogResponse(MonitorLogBase):
     task_id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MonitorLogListResponse(BaseModel):

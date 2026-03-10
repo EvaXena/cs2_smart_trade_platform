@@ -101,16 +101,17 @@ async def search_items(
     db: AsyncSession = Depends(get_db),
 ):
     """搜索饰品"""
-    # 参数化查询，防止SQL注入
-    # 使用 bindparam 或让 SQLAlchemy 自动处理参数
-    search_pattern = f"%{keyword}%"
+    # 转义特殊字符防止 LIKE 注入
+    escaped_keyword = keyword.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    search_pattern = f"%{escaped_keyword}%"
     
-    # 使用 func.count() 获取总数
+    # 使用 case_sensitive=False 的 ilike 查询
+    # SQLAlchemy 会自动处理参数化查询，防止 SQL 注入
     count_query = select(func.count()).select_from(Item).where(
         or_(
-            Item.name.ilike(search_pattern),
-            Item.name_cn.ilike(search_pattern),
-            Item.market_hash_name.ilike(search_pattern)
+            Item.name.ilike(search_pattern, escape='\\'),
+            Item.name_cn.ilike(search_pattern, escape='\\'),
+            Item.market_hash_name.ilike(search_pattern, escape='\\')
         )
     )
     count_result = await db.execute(count_query)
@@ -118,9 +119,9 @@ async def search_items(
     
     query = select(Item).where(
         or_(
-            Item.name.ilike(search_pattern),
-            Item.name_cn.ilike(search_pattern),
-            Item.market_hash_name.ilike(search_pattern)
+            Item.name.ilike(search_pattern, escape='\\'),
+            Item.name_cn.ilike(search_pattern, escape='\\'),
+            Item.market_hash_name.ilike(search_pattern, escape='\\')
         )
     ).limit(limit)
     
@@ -153,7 +154,7 @@ async def get_item(
 @router.get("/{item_id}/price", response_model=PriceHistoryListResponse)
 async def get_price_history(
     item_id: int,
-    source: Optional[str] = Query(None, regex="^(buff|steam)$"),
+    source: Optional[str] = Query(None, pattern="^(buff|steam)$"),
     days: int = Query(7, ge=1, le=90),
     db: AsyncSession = Depends(get_db),
 ):
