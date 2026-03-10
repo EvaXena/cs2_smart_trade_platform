@@ -141,13 +141,16 @@ async def get_item(
     db: AsyncSession = Depends(get_db),
 ):
     """获取饰品详情"""
+    # 使用验证器验证item_id
+    validated_item_id = validate_item_id(item_id)
+    
     result = await db.execute(
-        select(Item).where(Item.id == item_id)
+        select(Item).where(Item.id == validated_item_id)
     )
     item = result.scalar_one_or_none()
     
     if not item:
-        raise NotFoundError("饰品", item_id)
+        raise NotFoundError("饰品", validated_item_id)
     
     return item
 
@@ -162,13 +165,16 @@ async def get_price_history(
     """获取价格历史"""
     from datetime import datetime, timedelta
     
+    # 使用验证器验证item_id
+    validated_item_id = validate_item_id(item_id)
+    
     # 验证饰品存在
     result = await db.execute(
-        select(Item).where(Item.id == item_id)
+        select(Item).where(Item.id == validated_item_id)
     )
     item = result.scalar_one_or_none()
     if not item:
-        raise NotFoundError("饰品", item_id)
+        raise NotFoundError("饰品", validated_item_id)
     
     # 查询价格历史
     query = select(PriceHistory).where(
@@ -197,13 +203,16 @@ async def get_price_overview(
     db: AsyncSession = Depends(get_db),
 ):
     """获取价格概览 (BUFF vs Steam)"""
+    # 使用验证器验证item_id
+    validated_item_id = validate_item_id(item_id)
+    
     result = await db.execute(
-        select(Item).where(Item.id == item_id)
+        select(Item).where(Item.id == validated_item_id)
     )
     item = result.scalar_one_or_none()
     
     if not item:
-        raise NotFoundError("饰品", item_id)
+        raise NotFoundError("饰品", validated_item_id)
     
     # 计算搬砖利润
     arbitrage_profit = None

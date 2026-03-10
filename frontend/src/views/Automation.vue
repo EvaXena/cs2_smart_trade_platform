@@ -350,6 +350,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .page-header h1 {
@@ -359,5 +361,45 @@ onMounted(() => {
 
 .rules-card {
   min-height: 400px;
+}
+
+.rules-card :deep(.el-table) {
+  overflow: hidden;
+}
+
+/* 响应式断点 */
+@media (max-width: 768px) {
+  .automation-page {
+    padding: 10px;
+  }
+  
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .page-header h1 {
+    font-size: 20px;
+    text-align: center;
+  }
+  
+  .header-actions {
+    display: flex;
+    justify-content: center;
+  }
+  
+  .rules-card {
+    overflow-x: auto;
+  }
+  
+  .rules-card :deep(.el-table) {
+    min-width: 700px;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-header {
+    margin-bottom: 10px;
+  }
 }
 </style>

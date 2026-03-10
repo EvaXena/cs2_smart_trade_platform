@@ -7,6 +7,8 @@ import sys
 from typing import Any, Dict
 from datetime import datetime
 import json
+from logging.handlers import RotatingFileHandler
+import os
 
 
 class StandardizedFormatter(logging.Formatter):
@@ -78,7 +80,10 @@ def setup_logging(
     log_level: str = "INFO",
     log_file: str = None,
     enable_standardized: bool = True,
-    include_context: bool = True
+    include_context: bool = True,
+    enable_rotation: bool = True,
+    max_bytes: int = 10 * 1024 * 1024,  # 10MB
+    backup_count: int = 5
 ) -> None:
     """
     配置日志系统
@@ -88,6 +93,9 @@ def setup_logging(
         log_file: 日志文件路径 (可选)
         enable_standardized: 是否启用标准化格式
         include_context: 是否包含上下文信息
+        enable_rotation: 是否启用日志轮转
+        max_bytes: 单个日志文件最大字节数
+        backup_count: 保留的备份文件数量
     """
     # 获取根日志记录器
     root_logger = logging.getLogger()
@@ -114,9 +122,25 @@ def setup_logging(
     
     root_logger.addHandler(console_handler)
     
-    # 文件处理器 (如果指定)
+    # 文件处理器 - 支持日志轮转 (如果指定)
     if log_file:
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        # 确保日志目录存在
+        log_dir = os.path.dirname(log_file)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
+        if enable_rotation:
+            # 使用 RotatingFileHandler 进行日志轮转
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8"
+            )
+        else:
+            # 使用普通 FileHandler
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        
         file_handler.setLevel(getattr(logging, log_level.upper()))
         file_handler.setFormatter(StandardizedFormatter(include_context=include_context))
         root_logger.addHandler(file_handler)
@@ -202,10 +226,25 @@ def log_with_context(
 
 
 # 初始化默认日志配置
-def init_logging() -> None:
-    """初始化默认日志配置"""
+def init_logging(
+    log_file: str = "logs/app.log",
+    log_level: str = "INFO",
+    enable_rotation: bool = True
+) -> None:
+    """
+    初始化默认日志配置
+    
+    Args:
+        log_file: 日志文件路径
+        log_level: 日志级别
+        enable_rotation: 是否启用日志轮转
+    """
     setup_logging(
-        log_level="INFO",
+        log_level=log_level,
+        log_file=log_file,
         enable_standardized=True,
-        include_context=True
+        include_context=True,
+        enable_rotation=enable_rotation,
+        max_bytes=10 * 1024 * 1024,  # 10MB
+        backup_count=5
     )

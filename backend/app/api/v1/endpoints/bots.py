@@ -3,13 +3,17 @@
 机器人端点
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from datetime import datetime
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.exceptions import (
+    APIError, NotFoundError, UnauthorizedError, 
+    BusinessError, ExternalServiceError, ValidationError
+)
 from app.models.user import User
 from app.models.bot import Bot, BotTrade
 from app.schemas.bot import (
@@ -85,10 +89,7 @@ async def get_bot(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     return bot
 
@@ -107,10 +108,7 @@ async def update_bot(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     # 更新字段
     update_data = bot_data.model_dump(exclude_unset=True)
@@ -137,10 +135,7 @@ async def delete_bot(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     await db.delete(bot)
     await db.commit()
@@ -162,10 +157,7 @@ async def login_bot(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     # 如果提供了新的认证信息，更新机器人
     if login_data:
@@ -194,31 +186,19 @@ async def login_bot(
                     bot.status = 'online'
                     bot.last_activity = datetime.utcnow()
                 else:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Steam 登录失败，session token 无效"
-                    )
+                    raise UnauthorizedError("Steam 登录失败，session token 无效")
             elif bot.ma_file:
                 # 使用 ma_file 登录
                 bot.status = 'online'
                 bot.last_activity = datetime.utcnow()
             else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="请提供 session_token 或 ma_file"
-                )
-        except HTTPException:
+                raise BusinessError("请提供 session_token 或 ma_file")
+        except APIError:
             raise
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Steam 登录失败: {str(e)}"
-            )
+            raise ExternalServiceError("Steam", f"Steam 登录失败: {str(e)}")
     else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请提供 session_token 或 ma_file"
-        )
+        raise BusinessError("请提供 session_token 或 ma_file")
     
     await db.commit()
     await db.refresh(bot)
@@ -243,10 +223,7 @@ async def logout_bot(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     bot.status = 'offline'
     bot.last_activity = datetime.utcnow()
@@ -273,16 +250,10 @@ async def refresh_bot_session(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     if not bot.steam_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="机器人未绑定 Steam 账户"
-        )
+        raise BusinessError("机器人未绑定 Steam 账户")
     
     # 实现实际的 session 刷新逻辑
     try:
@@ -308,10 +279,7 @@ async def refresh_bot_session(
             status=bot.status
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Session 刷新失败: {str(e)}"
-        )
+        raise ExternalServiceError("Steam", f"Session 刷新失败: {str(e)}")
 
 
 @router.get("/{bot_id}/inventory", response_model=BotInventoryResponse)
@@ -327,10 +295,7 @@ async def get_bot_inventory(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     # 从数据库获取该机器人的库存
     from app.models.inventory import Inventory
@@ -376,10 +341,7 @@ async def get_bot_trades(
     bot = result.scalar_one_or_none()
     
     if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="机器人不存在"
-        )
+        raise NotFoundError("机器人", bot_id)
     
     # 获取交易记录
     query = select(BotTrade).where(BotTrade.bot_id == bot_id)

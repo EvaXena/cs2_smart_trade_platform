@@ -412,12 +412,25 @@ onMounted(() => {
 }
 
 /* 响应式断点 */
+/* 大屏幕桌面 */
 @media (max-width: 1200px) {
   .overview-cards :deep(.el-col) {
     width: 50%;
   }
 }
 
+/* 平板端 */
+@media (max-width: 1024px) {
+  .overview-cards :deep(.el-col) {
+    width: 50%;
+  }
+  
+  .chart-card {
+    min-height: 300px;
+  }
+}
+
+/* 移动端 */
 @media (max-width: 768px) {
   .stats-page {
     padding: 10px;
@@ -458,6 +471,7 @@ onMounted(() => {
   }
 }
 
+/* 小屏移动端 */
 @media (max-width: 480px) {
   .stat-card {
     gap: 12px;

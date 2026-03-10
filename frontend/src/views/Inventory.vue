@@ -240,6 +240,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .page-header h1 {
@@ -251,13 +253,92 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
+.filter-card :deep(.el-row) {
+  margin-left: -10px !important;
+  margin-right: -10px !important;
+}
+
+.filter-card :deep(.el-col) {
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+  margin-bottom: 10px;
+}
+
+.filter-card :deep(.el-select),
+.filter-card :deep(.el-input) {
+  width: 100%;
+}
+
 .inventory-card {
   min-height: 400px;
+}
+
+.inventory-card :deep(.el-table) {
+  overflow: hidden;
 }
 
 .pagination {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* 响应式断点 */
+/* 平板端 */
+@media (max-width: 1024px) {
+  .filter-card :deep(.el-col) {
+    width: 50% !important;
+  }
+  
+  .inventory-card :deep(.el-table) {
+    min-width: 600px;
+  }
+}
+
+/* 移动端 */
+@media (max-width: 768px) {
+  .inventory-page {
+    padding: 10px;
+  }
+  
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .page-header h1 {
+    font-size: 20px;
+    text-align: center;
+  }
+  
+  .header-actions {
+    display: flex;
+    justify-content: center;
+  }
+  
+  .filter-card :deep(.el-col) {
+    width: 100% !important;
+  }
+  
+  .inventory-card {
+    overflow-x: auto;
+  }
+  
+  .inventory-card :deep(.el-table) {
+    min-width: 700px;
+  }
+  
+  .pagination {
+    justify-content: center;
+  }
+}
+
+/* 小屏移动端 */
+@media (max-width: 480px) {
+  .page-header {
+    margin-bottom: 10px;
+  }
 }
 </style>

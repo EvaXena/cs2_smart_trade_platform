@@ -339,6 +339,18 @@ onMounted(() => {
 }
 
 /* 响应式断点样式 */
+/* 平板端 */
+@media (max-width: 1024px) {
+  .items-grid :deep(.el-col) {
+    width: 33.33% !important;
+  }
+  
+  .filter-card :deep(.el-col) {
+    width: 33.33% !important;
+  }
+}
+
+/* 移动端 */
 @media (max-width: 768px) {
   .market-page {
     padding: 10px;
@@ -379,6 +391,7 @@ onMounted(() => {
   }
 }
 
+/* 小屏移动端 */
 @media (max-width: 480px) {
   .page-header {
     margin-bottom: 10px;

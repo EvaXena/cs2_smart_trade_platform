@@ -19,6 +19,7 @@ from app.schemas.order import (
     OrderCancelRequest,
     OrderStatus,
 )
+from app.utils.validators import validate_item_id, validate_price, validate_quantity, validate_order_id
 
 router = APIRouter()
 
@@ -75,6 +76,11 @@ async def create_order(
     db: AsyncSession = Depends(get_db),
 ):
     """创建订单"""
+    # 使用验证器验证输入数据
+    validated_item_id = validate_item_id(order_data.item_id)
+    validated_price = validate_price(order_data.price)
+    validated_quantity = validate_quantity(order_data.quantity)
+    
     # 生成订单号
     import uuid
     order_id = f"ORD-{uuid.uuid4().hex[:12].upper()}"
@@ -82,10 +88,10 @@ async def create_order(
     order = Order(
         order_id=order_id,
         user_id=current_user.id,
-        item_id=order_data.item_id,
+        item_id=validated_item_id,
         side=order_data.side,
-        price=order_data.price,
-        quantity=order_data.quantity,
+        price=validated_price,
+        quantity=validated_quantity,
         source=order_data.source.value,
     )
     
@@ -103,15 +109,18 @@ async def get_order(
     db: AsyncSession = Depends(get_db),
 ):
     """获取订单详情"""
+    # 使用验证器验证order_id
+    validated_order_id = validate_order_id(order_id)
+    
     result = await db.execute(
         select(Order).where(
-            and_(Order.order_id == order_id, Order.user_id == current_user.id)
+            and_(Order.order_id == validated_order_id, Order.user_id == current_user.id)
         )
     )
     order = result.scalar_one_or_none()
     
     if not order:
-        raise NotFoundError("订单", order_id)
+        raise NotFoundError("订单", validated_order_id)
     
     return order
 
@@ -123,15 +132,18 @@ async def cancel_order(
     db: AsyncSession = Depends(get_db),
 ):
     """取消订单"""
+    # 使用验证器验证order_id
+    validated_order_id = validate_order_id(order_id)
+    
     result = await db.execute(
         select(Order).where(
-            and_(Order.order_id == order_id, Order.user_id == current_user.id)
+            and_(Order.order_id == validated_order_id, Order.user_id == current_user.id)
         )
     )
     order = result.scalar_one_or_none()
     
     if not order:
-        raise NotFoundError("订单", order_id)
+        raise NotFoundError("订单", validated_order_id)
     
     if order.status != "pending":
         raise BusinessError("只能取消待处理的订单")

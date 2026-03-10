@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any, Dict, Optional, Callable
 from threading import Lock
+from collections import OrderedDict
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -36,12 +37,14 @@ class MemoryCache:
     - 支持 TTL（生存时间）
     - 线程安全
     - 自动清理过期条目
+    - 支持 LRU 淘汰策略
     - 支持多节点集群（分布式通知）
     """
     
-    def __init__(self, node_id: str = None):
-        self._cache: Dict[str, CacheEntry] = {}
+    def __init__(self, node_id: str = None, max_size: int = 1000):
+        self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._lock = Lock()
+        self._max_size = max_size  # 最大缓存条目数
         # 统计信息
         self._hits = 0
         self._misses = 0
@@ -88,6 +91,12 @@ class MemoryCache:
         with self._lock:
             self._cache.clear()
     
+    def _evict_if_needed(self) -> None:
+        """当缓存满时淘汰最旧的条目（LRU）"""
+        while len(self._cache) >= self._max_size:
+            # 弹出最旧的条目（OrderedDict 头部）
+            self._cache.popitem(last=False)
+    
     def get(self, key: str, default: Any = None) -> Optional[Any]:
         """获取缓存值"""
         with self._lock:
@@ -101,13 +110,24 @@ class MemoryCache:
                 self._misses += 1
                 return default
             
+            # 移动到末尾（表示最近使用）
+            self._cache.move_to_end(key)
             self._hits += 1
             return entry.value
     
     def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """设置缓存值"""
         with self._lock:
+            # 如果key已存在，先删除（更新位置）
+            if key in self._cache:
+                del self._cache[key]
+            
+            # 检查是否需要淘汰
+            self._evict_if_needed()
+            
             self._cache[key] = CacheEntry(value, ttl)
+            # 移动到末尾（最新）
+            self._cache.move_to_end(key)
     
     def delete(self, key: str) -> bool:
         """删除缓存"""
@@ -245,25 +265,21 @@ class RedisCache:
         
         try:
             import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 在异步环境中，直接调用异步版本并返回结果
-                # 注意：这是在同步函数中调用异步函数的特殊处理
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(asyncio.run, self.aget(key, default))
-                    return future.result(timeout=5)
-            
-            # 同步获取（用于初始化等场景）
-            return self._sync_get(key)
+            try:
+                loop = asyncio.get_running_loop()
+                # 在异步环境中，使用同步 Redis 客户端（不创建新事件循环）
+                return self._sync_get(key, default)
+            except RuntimeError:
+                # 没有运行中的事件循环，可以安全使用 asyncio.run
+                return asyncio.run(self.aget(key, default))
             
         except Exception as e:
             logger.error(f"Redis get error: {e}")
             self._misses += 1
             return default
     
-    def _sync_get(self, key: str) -> Any:
-        """同步获取缓存值的内部方法"""
+    def _sync_get(self, key: str, default: Any = None) -> Any:
+        """使用同步 Redis 客户端获取缓存值（可在异步上下文中安全使用）"""
         try:
             import redis
             r = redis.from_url(self._redis_url, decode_responses=True)
@@ -272,7 +288,7 @@ class RedisCache:
             
             if value is None:
                 self._misses += 1
-                return None
+                return default
             
             self._hits += 1
             return json.loads(value)
@@ -280,7 +296,7 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Redis sync get error: {e}")
             self._misses += 1
-            return None
+            return default
     
     def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """设置缓存值"""

@@ -23,7 +23,7 @@ from app.middleware.audit import audit_middleware
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 初始化日志配置
-    init_logging()
+    init_logging(log_file="logs/app.log")
     
     # 启动时初始化加密模块
     encryption_manager.initialize()
