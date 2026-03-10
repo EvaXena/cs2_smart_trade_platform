@@ -143,8 +143,8 @@ class TestTradingEngine:
             user_id=1
         )
         
-       "] is False
- assert result["success        assert "不存在" in result["message"]
+        assert result["success"] is False
+        assert "不存在" in result["message"]
     
     @pytest.mark.asyncio
     async def test_execute_buy_price_too_high(self, mock_db, mock_buff_client, mock_item):

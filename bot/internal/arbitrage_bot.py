@@ -43,9 +43,9 @@ class ArbitrageBot(TradingBotBase):
             "auto_confirm": True,        # 自动确认订单
             "enabled_items": None,       # 监控的物品列表（None=全部）
             "excluded_items": [],        # 排除的物品
-               if config:
- }
+        }
         
+        if config:
             default_config.update(config)
         
         super().__init__(

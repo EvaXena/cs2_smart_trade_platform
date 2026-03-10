@@ -36,14 +36,57 @@ class MemoryCache:
     - 支持 TTL（生存时间）
     - 线程安全
     - 自动清理过期条目
+    - 支持多节点集群（分布式通知）
     """
     
-    def __init__(self):
+    def __init__(self, node_id: str = None):
         self._cache: Dict[str, CacheEntry] = {}
         self._lock = Lock()
         # 统计信息
         self._hits = 0
         self._misses = 0
+        # 集群支持
+        self._node_id = node_id or f"node-{id(self)}"
+        self._subscribers: Dict[str, 'MemoryCache'] = {}
+    
+    def set_node_id(self, node_id: str) -> None:
+        """设置节点ID"""
+        self._node_id = node_id
+    
+    def get_node_id(self) -> str:
+        """获取节点ID"""
+        return self._node_id
+    
+    def subscribe(self, other_cache: 'MemoryCache') -> None:
+        """订阅另一个缓存节点的更新"""
+        self._subscribers[other_cache._node_id] = other_cache
+    
+    def unsubscribe(self, node_id: str) -> None:
+        """取消订阅"""
+        if node_id in self._subscribers:
+            del self._subscribers[node_id]
+    
+    def _notify_subscribers(self, operation: str, key: str) -> None:
+        """通知订阅者缓存变更"""
+        for node_id, subscriber in self._subscribers.items():
+            try:
+                if operation == "delete":
+                    subscriber._handle_remote_delete(key)
+                elif operation == "clear":
+                    subscriber._handle_remote_clear()
+            except Exception as e:
+                logger.warning(f"Failed to notify subscriber {node_id}: {e}")
+    
+    def _handle_remote_delete(self, key: str) -> None:
+        """处理远程删除通知"""
+        with self._lock:
+            if key in self._cache:
+                del self._cache[key]
+    
+    def _handle_remote_clear(self) -> None:
+        """处理远程清空通知"""
+        with self._lock:
+            self._cache.clear()
     
     def get(self, key: str, default: Any = None) -> Optional[Any]:
         """获取缓存值"""
