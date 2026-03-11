@@ -6,6 +6,7 @@
 import time
 import json
 import logging
+import threading
 from typing import Dict, Optional, Tuple
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -15,6 +16,51 @@ from app.core.config import settings
 from app.core.redis_manager import get_redis
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryRateLimiter:
+    """内存限流器（Redis 故障时的降级方案）"""
+    
+    def __init__(self):
+        self._data: Dict[str, list] = {}
+        self._lock = threading.Lock()
+    
+    def _clean_old_entries(self, key: str, window: int):
+        """清理过期记录"""
+        current_time = time.time()
+        if key in self._data:
+            self._data[key] = [t for t in self._data[key] if current_time - t < window]
+    
+    def check_and_record(self, key: str, limit: int, window: int) -> Tuple[bool, Optional[Dict]]:
+        """检查限流并记录请求
+        
+        Returns:
+            (是否允许, 超限信息)
+        """
+        with self._lock:
+            self._clean_old_entries(key, window)
+            
+            request_count = len(self._data.get(key, []))
+            
+            if request_count >= limit:
+                oldest = min(self._data.get(key, [current_time])) if self._data.get(key) else time.time()
+                retry_after = int(window - (time.time() - oldest)) + 1
+                
+                logger.warning(f"Memory rate limit exceeded for {key}: {request_count}/{limit}")
+                
+                return False, {
+                    "requests": request_count,
+                    "limit": limit,
+                    "window": window,
+                    "retry_after": retry_after,
+                }
+            
+            # 记录请求
+            if key not in self._data:
+                self._data[key] = []
+            self._data[key].append(time.time())
+            
+            return True, None
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -77,6 +123,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         
         # Redis 客户端
         self._redis_prefix = "rate_limit:"
+        
+        # 内存限流器（Redis 故障时的降级方案）
+        self._memory_limiter = MemoryRateLimiter()
     
     async def _get_redis(self):
         """获取 Redis 连接（使用统一管理器）"""
@@ -166,8 +215,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             
         except Exception as e:
             logger.error(f"Redis rate limit error: {e}")
-            # Redis 出错时允许请求通过，避免阻断服务
-            return True, None
+            # Redis 故障时使用内存限流作为降级方案
+            logger.warning(f"Using memory fallback rate limiter for {key}")
+            return self._memory_limiter.check_and_record(
+                key, 
+                config["requests"], 
+                config["window"]
+            )
     
     async def dispatch(self, request: Request, call_next):
         # 只对 API 端点进行限流

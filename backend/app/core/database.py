@@ -15,6 +15,8 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    pool_recycle=3600,      # 连接回收时间（1小时）
+    pool_timeout=30,       # 获取连接超时时间（30秒）
 )
 
 # 创建会话工厂

@@ -14,6 +14,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class DecryptionError(Exception):
+    """解密失败异常"""
+    pass
+
+
 class EncryptionManager:
     """加密管理器"""
     
@@ -81,16 +86,20 @@ class EncryptionManager:
         return self._fernet.encrypt(data.encode()).decode()
     
     def decrypt(self, encrypted_data: str) -> str:
-        """解密字符串"""
+        """解密字符串
+        
+        Raises:
+            DecryptionError: 解密失败时抛出异常
+        """
         if not self._fernet:
             self.initialize()
         if not encrypted_data:
-            return ""
+            raise DecryptionError("加密数据为空")
         try:
             return self._fernet.decrypt(encrypted_data.encode()).decode()
-        except Exception:
-            logger.error("解密失败")
-            return ""
+        except Exception as e:
+            logger.error(f"解密失败: {e}")
+            raise DecryptionError(f"解密失败: {str(e)}")
     
     @property
     def is_initialized(self) -> bool:
