@@ -144,6 +144,14 @@ class TradingEngine:
                 code="PRICE_TOO_HIGH"
             )
         
+        # 交易限额校验 (P0-1)
+        total_price = price * quantity
+        if total_price > settings.MAX_SINGLE_TRADE:
+            return ServiceResponse.err(
+                message=f"交易金额 {total_price:.2f} 超过单笔限额 {settings.MAX_SINGLE_TRADE}",
+                code="EXCEEDS_MAX_TRADE"
+            )
+        
         # 创建订单 (带超时控制)
         try:
             order_result = await asyncio.wait_for(

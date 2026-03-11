@@ -648,6 +648,18 @@ def get_cache() -> CacheManager:
             backend=backend,
             redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
         )
+        # 创建实例后自动调用 initialize()
+        import asyncio
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+                # 在异步环境中，使用 create_task 后台执行
+                asyncio.create_task(_cache.initialize())
+            except RuntimeError:
+                # 没有运行中的事件循环
+                asyncio.run(_cache.initialize())
+        except Exception as e:
+            logger.warning(f"Cache auto-initialize failed: {e}")
     
     return _cache
 

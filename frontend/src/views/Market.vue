@@ -118,7 +118,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import type { MarketItem } from '@/types'
 
@@ -170,8 +170,51 @@ const handleSearch = () => {
   fetchItems()
 }
 
-const handleBuy = (item: MarketItem) => {
-  ElMessage.info(`购买 ${item.name}`)
+const handleBuy = async (item: MarketItem) => {
+  // 大额交易确认机制（阈值 ¥1000）
+  if (item.buff_price >= 1000) {
+    try {
+      await ElMessageBox.confirm(
+        `确认购买 ${item.name}，价格 ¥${item.buff_price}？`,
+        '大额交易确认',
+        {
+          confirmButtonText: '确认购买',
+          cancelButtonText: '取消',
+          type: 'warning',
+        }
+      )
+    } catch {
+      // 用户取消
+      ElMessage.info('已取消购买')
+      return
+    }
+  }
+
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch('/api/v1/market/buy', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        item_id: item.id,
+        price: item.buff_price,
+        market_hash_name: item.market_hash_name,
+      }),
+    })
+
+    const data = await response.json()
+    
+    if (response.ok) {
+      ElMessage.success(`购买 ${item.name} 成功！`)
+    } else {
+      ElMessage.error(data.detail || '购买失败')
+    }
+  } catch (error) {
+    ElMessage.error('购买请求失败')
+  }
 }
 
 const handleAddMonitor = (item: MarketItem) => {

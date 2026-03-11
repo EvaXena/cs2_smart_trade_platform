@@ -319,6 +319,7 @@ const fetchOverviewStats = async () => {
     overviewStats.value = data
   } catch (error) {
     console.error('获取概览统计失败', error)
+    ElMessage.error('获取概览统计失败，请稍后重试')
   }
 }
 
@@ -336,6 +337,7 @@ const fetchProfitStats = async () => {
     updateProfitChart()
   } catch (error) {
     console.error('获取利润统计失败', error)
+    ElMessage.error('获取利润统计失败，请稍后重试')
   }
 }
 
@@ -353,6 +355,7 @@ const fetchInventoryValue = async () => {
     updateInventoryChart()
   } catch (error) {
     console.error('获取库存价值失败', error)
+    ElMessage.error('获取库存价值失败，请稍后重试')
   }
 }
 
@@ -371,6 +374,7 @@ const fetchRecentTrades = async () => {
     updateTradeTypeChart()
   } catch (error) {
     console.error('获取最近交易失败', error)
+    ElMessage.error('获取最近交易失败，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -435,6 +439,7 @@ const fetchTrendData = async () => {
     })
   } catch (error) {
     console.error('获取趋势数据失败', error)
+    ElMessage.error('获取趋势数据失败，请稍后重试')
   }
 }
 

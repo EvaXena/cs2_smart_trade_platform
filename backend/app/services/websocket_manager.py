@@ -26,6 +26,10 @@ class ConnectionState(str, Enum):
 class WebSocketManager:
     """WebSocket连接管理器 - 增强版"""
     
+    # 类级别的最大连接数限制 (P1-3)
+    MAX_TOTAL_CONNECTIONS: int = 1000  # 系统最大连接数
+    MAX_CONNECTIONS_PER_USER: int = 5  # 单用户最大连接数
+    
     def __init__(self):
         # user_id -> Set[WebSocket]
         self.active_connections: Dict[int, Set[WebSocket]] = {}
@@ -54,7 +58,21 @@ class WebSocketManager:
     # ========== 连接管理 ==========
     
     async def connect(self, websocket: WebSocket, user_id: int):
-        """WebSocket连接"""
+        """WebSocket连接 (P1-3: 添加连接数限制)"""
+        # 检查系统最大连接数
+        total_connections = sum(len(conns) for conns in self.active_connections.values())
+        if total_connections >= self.MAX_TOTAL_CONNECTIONS:
+            await websocket.close(code=1013, reason="Server at max capacity")
+            logger.warning(f"Rejected connection: max total connections {self.MAX_TOTAL_CONNECTIONS} reached")
+            return False
+        
+        # 检查单用户最大连接数
+        if user_id in self.active_connections:
+            if len(self.active_connections[user_id]) >= self.MAX_CONNECTIONS_PER_USER:
+                await websocket.close(code=1013, reason="Too many connections from this user")
+                logger.warning(f"Rejected connection from user {user_id}: max per-user connections {self.MAX_CONNECTIONS_PER_USER} reached")
+                return False
+        
         await websocket.accept()
         
         if user_id not in self.active_connections:

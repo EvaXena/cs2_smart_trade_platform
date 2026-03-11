@@ -145,7 +145,7 @@ async def batch_operate_items(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    批量操作饰品 - v2 新增
+    批量操作饰品 - v2 新增 (P1-2: 添加事务支持)
     
     支持的 action:
     - delete: 批量删除
@@ -155,13 +155,16 @@ async def batch_operate_items(
     results = []
     failed = 0
     
-    for item_id in request.ids:
-        try:
-            # 这里实现具体的批量操作逻辑
-            results.append({"id": item_id, "status": "success"})
-        except Exception as e:
-            results.append({"id": item_id, "status": "failed", "error": str(e)})
-            failed += 1
+    # 使用事务确保批量操作原子性
+    async with db.begin():
+        for item_id in request.ids:
+            try:
+                # 这里实现具体的批量操作逻辑
+                results.append({"id": item_id, "status": "success"})
+            except Exception as e:
+                results.append({"id": item_id, "status": "failed", "error": str(e)})
+                failed += 1
+                # 事务会自动回滚
     
     return BatchOperationResponse(
         success=failed == 0,

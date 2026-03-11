@@ -127,8 +127,6 @@ router.afterEach(() => {
     loading.value = false
   }, 300) // 短暂延迟让内容渲染完成
 })
-const loading = ref(false)
-
 const checkMobile = () => {
   isMobile.value = window.innerWidth < 768
 }

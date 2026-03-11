@@ -340,43 +340,43 @@ async def batch_list_items(
     failed_count = 0
     failed_ids = []
     
-    for inv_id in batch_data.inventory_ids:
-        try:
-            # 验证库存
-            result = await db.execute(
-                select(Inventory).where(
-                    Inventory.id == inv_id,
-                    Inventory.user_id == current_user.id,
-                    Inventory.status == 'available'
+    # 使用事务包装批量操作
+    async with db.begin():
+        for inv_id in batch_data.inventory_ids:
+            try:
+                # 验证库存
+                result = await db.execute(
+                    select(Inventory).where(
+                        Inventory.id == inv_id,
+                        Inventory.user_id == current_user.id,
+                        Inventory.status == 'available'
+                    )
                 )
-            )
-            inventory = result.scalar_one_or_none()
-            
-            if not inventory:
+                inventory = result.scalar_one_or_none()
+                
+                if not inventory:
+                    failed_count += 1
+                    failed_ids.append(inv_id)
+                    continue
+                
+                # 创建上架记录
+                listing = Listing(
+                    inventory_id=inventory.id,
+                    price=batch_data.price,
+                    platform=batch_data.platform,
+                    status='listing'
+                )
+                db.add(listing)
+                
+                # 更新状态
+                inventory.status = 'listing'
+                inventory.listed_at = datetime.utcnow()
+                
+                success_count += 1
+                
+            except Exception:
                 failed_count += 1
                 failed_ids.append(inv_id)
-                continue
-            
-            # 创建上架记录
-            listing = Listing(
-                inventory_id=inventory.id,
-                price=batch_data.price,
-                platform=batch_data.platform,
-                status='listing'
-            )
-            db.add(listing)
-            
-            # 更新状态
-            inventory.status = 'listing'
-            inventory.listed_at = datetime.utcnow()
-            
-            success_count += 1
-            
-        except Exception:
-            failed_count += 1
-            failed_ids.append(inv_id)
-    
-    await db.commit()
     
     return BatchResponse(
         success=failed_count == 0,
@@ -398,38 +398,38 @@ async def batch_unlist_items(
     failed_count = 0
     failed_ids = []
     
-    for listing_id in batch_data.listing_ids:
-        try:
-            # 验证上架记录
-            result = await db.execute(
-                select(Listing, Inventory).join(Inventory).where(
-                    Listing.id == listing_id,
-                    Listing.status == 'listing',
-                    Inventory.user_id == current_user.id
+    # 使用事务包装批量操作
+    async with db.begin():
+        for listing_id in batch_data.listing_ids:
+            try:
+                # 验证上架记录
+                result = await db.execute(
+                    select(Listing, Inventory).join(Inventory).where(
+                        Listing.id == listing_id,
+                        Listing.status == 'listing',
+                        Inventory.user_id == current_user.id
+                    )
                 )
-            )
-            row = result.first()
-            
-            if not row:
+                row = result.first()
+                
+                if not row:
+                    failed_count += 1
+                    failed_ids.append(listing_id)
+                    continue
+                
+                listing, inventory = row
+                
+                # 更新状态
+                listing.status = 'cancelled'
+                listing.cancelled_at = datetime.utcnow()
+                inventory.status = 'available'
+                inventory.listed_at = None
+                
+                success_count += 1
+                
+            except Exception:
                 failed_count += 1
                 failed_ids.append(listing_id)
-                continue
-            
-            listing, inventory = row
-            
-            # 更新状态
-            listing.status = 'cancelled'
-            listing.cancelled_at = datetime.utcnow()
-            inventory.status = 'available'
-            inventory.listed_at = None
-            
-            success_count += 1
-            
-        except Exception:
-            failed_count += 1
-            failed_ids.append(listing_id)
-    
-    await db.commit()
     
     return BatchResponse(
         success=failed_count == 0,

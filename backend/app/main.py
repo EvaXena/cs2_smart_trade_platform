@@ -21,6 +21,7 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware, ConnectionLimitMiddleware
 from app.middleware.audit import audit_middleware
 from app.services.steam_service import SteamAPI
+from app.services.cache import get_cache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,14 @@ async def lifespan(app: FastAPI):
     
     # 启动时初始化加密模块
     encryption_manager.initialize()
+    
+    # 启动时初始化缓存服务
+    try:
+        cache = get_cache()
+        await cache.initialize()
+        logger.info("Cache service initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize cache service: {e}")
     
     # 启动时创建数据库表
     async with engine.begin() as conn:

@@ -82,44 +82,55 @@ async def check_idempotency(key: str) -> Tuple[bool, Optional[dict]]:
         (是否已处理, 已保存的响应)
     """
     import json
-    redis_client = await get_redis()
+    
+    try:
+        redis_client = await get_redis()
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis for idempotency check: {e}")
+        # Redis 连接失败时，返回 False 允许请求继续（降级处理）
+        return False, None
     
     # 使用 SETNX + GET 实现原子检查
     # 先尝试设置锁（如果不存在）
     lock_key = f"{key}:lock"
     
-    # 使用原子操作获取锁
-    acquired = await redis_client.set(
-        lock_key, 
-        "1", 
-        nx=True,  # 仅当不存在时设置
-        ex=30     # 锁过期时间 30 秒
-    )
-    
-    if acquired:
-        try:
-            # 获取锁成功，检查是否已有缓存的响应
-            cached_response = await redis_client.get(key)
-            if cached_response:
-                # 存在已缓存的响应，返回缓存结果
-                return True, json.loads(cached_response)
-            # 没有缓存响应，返回 False 表示可以继续处理
-            return False, None
-        finally:
-            # 确保锁会被释放（即使处理失败）
-            # 注意：这里不删除锁，而是让它自然过期
-            # 避免删除锁时恰好另一个请求进入导致的问题
-            pass
-    else:
-        # 获取锁失败，说明有并发请求正在处理
-        # 等待一段时间后检查是否有缓存的响应
-        for _ in range(10):  # 最多等待 5 秒
-            await asyncio.sleep(0.5)
-            cached_response = await redis_client.get(key)
-            if cached_response:
-                return True, json.loads(cached_response)
+    try:
+        # 使用原子操作获取锁
+        acquired = await redis_client.set(
+            lock_key, 
+            "1", 
+            nx=True,  # 仅当不存在时设置
+            ex=30     # 锁过期时间 30 秒
+        )
         
-        # 等待超时，返回 False
+        if acquired:
+            try:
+                # 获取锁成功，检查是否已有缓存的响应
+                cached_response = await redis_client.get(key)
+                if cached_response:
+                    # 存在已缓存的响应，返回缓存结果
+                    return True, json.loads(cached_response)
+                # 没有缓存响应，返回 False 表示可以继续处理
+                return False, None
+            finally:
+                # 显式删除锁
+                try:
+                    await redis_client.delete(lock_key)
+                except Exception as e:
+                    logger.warning(f"Failed to delete idempotency lock: {e}")
+        else:
+            # 获取锁失败，说明有并发请求正在处理
+            # 等待一段时间后检查是否有缓存的响应
+            for _ in range(10):  # 最多等待 5 秒
+                await asyncio.sleep(0.5)
+                cached_response = await redis_client.get(key)
+                if cached_response:
+                    return True, json.loads(cached_response)
+            
+            # 等待超时，返回 False
+            return False, None
+    except Exception as e:
+        logger.error(f"Error in idempotency check: {e}")
         return False, None
 
 
