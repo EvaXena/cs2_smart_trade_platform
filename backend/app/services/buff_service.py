@@ -273,17 +273,40 @@ class BuffAPI:
         return result
 
 
-# 全局客户端实例
+# 全局客户端实例 - LRU 缓存
 _buff_clients: Dict[str, BuffAPI] = {}
+_buff_clients_order: List[str] = []  # 记录访问顺序
+MAX_CLIENTS = 10  # 最大客户端数量
+
+
+def _evict_oldest_client():
+    """驱逐最旧的客户端"""
+    global _buff_clients, _buff_clients_order
+    if _buff_clients_order:
+        oldest_key = _buff_clients_order.pop(0)
+        if oldest_key in _buff_clients:
+            # 关闭旧的客户端连接
+            old_client = _buff_clients.pop(oldest_key)
+            asyncio.create_task(old_client.close())
 
 
 def get_buff_client(cookie: Optional[str] = None) -> BuffAPI:
     """获取 BUFF 客户端"""
+    global _buff_clients, _buff_clients_order
+    
     if cookie:
         # 根据 cookie 哈希创建唯一实例
         key = hashlib.md5(cookie.encode()).hexdigest()
-        if key not in _buff_clients:
+        if key in _buff_clients:
+            # 移动到末尾（表示最近使用）
+            _buff_clients_order.remove(key)
+            _buff_clients_order.append(key)
+        else:
+            # 检查是否需要驱逐旧客户端
+            if len(_buff_clients) >= MAX_CLIENTS:
+                _evict_oldest_client()
             _buff_clients[key] = BuffAPI(cookie)
+            _buff_clients_order.append(key)
         return _buff_clients[key]
     
     return BuffAPI()
