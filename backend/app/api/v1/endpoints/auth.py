@@ -23,6 +23,7 @@ from app.core.security import (
     oauth2_scheme,
 )
 from app.core.token_blacklist import add_token_to_blacklist
+from app.core.redis_manager import get_redis
 from app.models.user import User
 from app.schemas.user import (
     UserCreate,
@@ -35,24 +36,6 @@ from app.schemas.user import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Redis 配置
-import redis.asyncio as redis
-
-_redis_client: redis.Redis = None
-
-
-async def get_redis_client() -> redis.Redis:
-    """获取 Redis 客户端"""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = redis.from_url(
-            settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True
-        )
-    return _redis_client
-
 
 # Redis 键前缀
 _LOGIN_ATTEMPTS_PREFIX = "login:attempts:"
@@ -67,7 +50,7 @@ async def _cleanup_old_attempts(username: str, max_age_seconds: int = 900):
 
 async def _check_login_attempts(username: str) -> bool:
     """检查是否超过登录尝试限制"""
-    client = await get_redis_client()
+    client = await get_redis()
     current_time = time.time()
     
     # 检查是否被锁定
@@ -117,7 +100,7 @@ async def _check_login_attempts(username: str) -> bool:
 
 async def _record_login_attempt(username: str):
     """记录登录尝试"""
-    client = await get_redis_client()
+    client = await get_redis()
     current_time = time.time()
     
     attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
@@ -255,7 +238,7 @@ async def login(
         )
     
     # 登录成功，清除尝试记录
-    client = await get_redis_client()
+    client = await get_redis()
     attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
     await client.delete(attempts_key)
     

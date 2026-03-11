@@ -11,9 +11,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-import redis.asyncio as redis
-
 from app.core.config import settings
+from app.core.redis_manager import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -77,24 +76,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
         
         # Redis 客户端
-        self._redis_client: Optional[redis.Redis] = None
         self._redis_prefix = "rate_limit:"
     
-    async def _get_redis(self) -> redis.Redis:
-        """获取或创建 Redis 连接"""
-        if self._redis_client is None:
-            self._redis_client = redis.from_url(
-                settings.REDIS_URL,
-                encoding="utf-8",
-                decode_responses=True
-            )
-        return self._redis_client
+    async def _get_redis(self):
+        """获取 Redis 连接（使用统一管理器）"""
+        return await get_redis()
     
     async def _close_redis(self):
-        """关闭 Redis 连接"""
-        if self._redis_client:
-            await self._redis_client.close()
-            self._redis_client = None
+        """关闭 Redis 连接（由全局管理器统一管理）"""
+        pass  # 不再单独关闭，由 redis_manager 统一管理
     
     def _get_client_ip(self, request: Request) -> str:
         """获取客户端IP"""

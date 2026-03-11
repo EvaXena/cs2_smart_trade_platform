@@ -44,40 +44,55 @@ class User(Base):
     inventory = relationship("Inventory", back_populates="user")
     monitors = relationship("MonitorTask", back_populates="user")
 
-    # 属性：用于解密访问
+    # 属性：用于解密访问（使用延迟解密，避免模块加载时调用）
     @property
     def steam_cookie(self) -> str:
         """解密获取 steam_cookie"""
+        if not self.steam_cookie_encrypted:
+            return ""
         from app.core.encryption import decrypt_sensitive_data
-        return decrypt_sensitive_data(self.steam_cookie_encrypted or "")
+        return decrypt_sensitive_data(self.steam_cookie_encrypted)
     
     @steam_cookie.setter
     def steam_cookie(self, value: str):
         """加密存储 steam_cookie"""
+        if not value:
+            self.steam_cookie_encrypted = None
+            return
         from app.core.encryption import encrypt_sensitive_data
         self.steam_cookie_encrypted = encrypt_sensitive_data(value)
     
     @property
     def buff_cookie(self) -> str:
         """解密获取 buff_cookie"""
+        if not self.buff_cookie_encrypted:
+            return ""
         from app.core.encryption import decrypt_sensitive_data
-        return decrypt_sensitive_data(self.buff_cookie_encrypted or "")
+        return decrypt_sensitive_data(self.buff_cookie_encrypted)
     
     @buff_cookie.setter
     def buff_cookie(self, value: str):
         """加密存储 buff_cookie"""
+        if not value:
+            self.buff_cookie_encrypted = None
+            return
         from app.core.encryption import encrypt_sensitive_data
         self.buff_cookie_encrypted = encrypt_sensitive_data(value)
     
     @property
     def ma_file(self) -> str:
         """解密获取 ma_file"""
+        if not self.ma_file_encrypted:
+            return ""
         from app.core.encryption import decrypt_sensitive_data
-        return decrypt_sensitive_data(self.ma_file_encrypted or "")
+        return decrypt_sensitive_data(self.ma_file_encrypted)
     
     @ma_file.setter
     def ma_file(self, value: str):
         """加密存储 ma_file"""
+        if not value:
+            self.ma_file_encrypted = None
+            return
         from app.core.encryption import encrypt_sensitive_data
         self.ma_file_encrypted = encrypt_sensitive_data(value)
     

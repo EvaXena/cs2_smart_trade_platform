@@ -2,8 +2,9 @@
 """
 监控端点
 """
+import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime
@@ -13,6 +14,11 @@ from app.core.security import get_current_user
 from app.core.exceptions import (
     APIError, NotFoundError, UnauthorizedError, 
     BusinessError, ValidationError, ConflictError
+)
+from app.core.idempotency import (
+    generate_idempotency_key,
+    check_idempotency,
+    save_idempotent_response,
 )
 from app.models.user import User
 from app.models.monitor import MonitorTask, MonitorLog
@@ -25,6 +31,8 @@ from app.schemas.monitor import (
     MonitorLogListResponse,
     MonitorActionResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -66,9 +74,26 @@ async def get_monitors(
 async def create_monitor(
     monitor_data: MonitorCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    """创建监控任务"""
+    """创建监控任务（支持幂等性）"""
+    # 如果提供了幂等性 key，进行检查
+    if idempotency_key:
+        # 生成内部幂等性 key
+        internal_key = generate_idempotency_key(
+            current_user.id,
+            "POST",
+            "/api/v1/monitors",
+            f"{monitor_data.item_id}:{monitor_data.condition_type}:{monitor_data.threshold}"
+        )
+        
+        # 检查是否已处理过
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复监控创建请求，key: {idempotency_key}")
+            return cached_response
+    
     monitor = MonitorTask(
         name=monitor_data.name,
         description=monitor_data.description,
@@ -90,7 +115,14 @@ async def create_monitor(
     await db.commit()
     await db.refresh(monitor)
     
-    return monitor
+    # 构建响应数据
+    response_data = MonitorResponse.model_validate(monitor).model_dump()
+    
+    # 如果提供了幂等性 key，保存响应
+    if idempotency_key:
+        await save_idempotent_response(internal_key, response_data)
+    
+    return response_data
 
 
 @router.get("/{monitor_id}", response_model=MonitorResponse)

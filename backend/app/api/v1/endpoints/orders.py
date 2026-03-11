@@ -2,8 +2,9 @@
 """
 订单端点
 """
+import logging
 from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
@@ -11,6 +12,11 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.exceptions import NotFoundError, BusinessError
+from app.core.idempotency import (
+    generate_idempotency_key,
+    check_idempotency,
+    save_idempotent_response,
+)
 from app.models.user import User
 from app.models.order import Order
 from app.schemas.order import (
@@ -21,6 +27,8 @@ from app.schemas.order import (
     OrderStatus,
 )
 from app.utils.validators import validate_item_id, validate_price, validate_quantity, validate_order_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -79,8 +87,25 @@ async def create_order(
     order_data: OrderCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    """创建订单"""
+    """创建订单（支持幂等性）"""
+    # 如果提供了幂等性 key，进行检查
+    if idempotency_key:
+        # 生成内部幂等性 key
+        internal_key = generate_idempotency_key(
+            current_user.id,
+            "POST",
+            "/api/v1/orders",
+            f"{order_data.item_id}:{order_data.side}:{order_data.price}:{order_data.quantity}"
+        )
+        
+        # 检查是否已处理过
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复订单请求，key: {idempotency_key}")
+            return cached_response
+    
     # 使用验证器验证输入数据
     validated_item_id = validate_item_id(order_data.item_id)
     validated_price = validate_price(order_data.price)
@@ -104,7 +129,14 @@ async def create_order(
     await db.commit()
     await db.refresh(order)
     
-    return order
+    # 构建响应数据
+    response_data = OrderResponse.model_validate(order).model_dump()
+    
+    # 如果提供了幂等性 key，保存响应
+    if idempotency_key:
+        await save_idempotent_response(internal_key, response_data)
+    
+    return response_data
 
 
 @router.get("/{order_id}", response_model=OrderResponse)

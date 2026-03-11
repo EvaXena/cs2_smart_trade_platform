@@ -10,8 +10,6 @@ from datetime import datetime, timedelta
 
 import aiohttp
 
-import redis.asyncio as redis
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -20,6 +18,7 @@ from app.models.monitor import MonitorTask, MonitorLog
 from app.services.buff_service import get_buff_client
 from app.services.steam_service import get_steam_api
 from app.core.config import settings
+from app.core.redis_manager import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 class DistributedLock:
     """Redis 分布式锁"""
     
-    def __init__(self, redis_client: redis.Redis, key: str, ttl: int = 60):
+    def __init__(self, redis_client, key: str, ttl: int = 60):
         self._redis = redis_client
         self._key = f"lock:{key}"
         self._ttl = ttl
@@ -113,9 +112,6 @@ class DistributedLock:
 class PriceMonitor:
     """价格监控服务（分布式版本）"""
     
-    # 类级别的 Redis 客户端
-    _redis_client: Optional[redis.Redis] = None
-    
     def __init__(self, db: AsyncSession, node_id: Optional[str] = None):
         self.db = db
         self.buff_client = get_buff_client()
@@ -127,22 +123,14 @@ class PriceMonitor:
         self.node_id = node_id or f"monitor-{id(self)}"
     
     @classmethod
-    async def get_redis(cls) -> redis.Redis:
-        """获取 Redis 客户端"""
-        if cls._redis_client is None:
-            cls._redis_client = redis.from_url(
-                settings.REDIS_URL,
-                encoding="utf-8",
-                decode_responses=True
-            )
-        return cls._redis_client
+    async def get_redis(cls):
+        """获取 Redis 客户端（使用统一管理器）"""
+        return await get_redis()
     
     @classmethod
     async def close_redis(cls):
-        """关闭 Redis 连接"""
-        if cls._redis_client:
-            await cls._redis_client.close()
-            cls._redis_client = None
+        """关闭 Redis 连接（由全局管理器统一管理）"""
+        pass  # 不再单独关闭，由 redis_manager 统一管理
     
     async def acquire_leader_lock(self, lock_name: str, ttl: int = 60) -> DistributedLock:
         """获取领导者锁"""
@@ -304,7 +292,7 @@ class PriceMonitor:
                     triggered = True
                     message = f"{item.name} 价格低于 {task.threshold}，当前价格: {item.current_price}"
             
-            elif "price_above task.condition_type ==":
+            elif task.condition_type == "price_above":
                 if item.current_price >= float(task.threshold):
                     triggered = True
                     message = f"{item.name} 价格高于 {task.threshold}，当前价格: {item.current_price}"
@@ -406,4 +394,4 @@ async def cleanup_monitors():
     """清理监控实例"""
     global _monitors
     _monitors.clear()
-    await PriceMonitor.close_redis()
+    # Redis 连接由 redis_manager 统一管理，不需要在这里关闭
