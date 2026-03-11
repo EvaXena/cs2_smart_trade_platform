@@ -196,6 +196,17 @@ class TestWebSocketHeartbeat:
         
         await self.ws_manager.connect(ws, user_id)
         
+        # 模拟无响应 - 清空messages，这样receive_json会返回非pong的响应
+        # 注意：MockWebSocket在没有messages时返回{"type": "pong"}，这会导致心跳不超时
+        # 我们需要替换receive_json来模拟超时
+        original_receive_json = ws.receive_json
+        
+        async def mock_receive_json():
+            # 模拟无响应超时
+            await asyncio.sleep(1)  # 睡眠超过heartbeat_timeout
+        
+        ws.receive_json = mock_receive_json
+        
         # 启动心跳但不响应，应该超时
         heartbeat_task = asyncio.create_task(
             self.ws_manager.start_heartbeat(ws, user_id)

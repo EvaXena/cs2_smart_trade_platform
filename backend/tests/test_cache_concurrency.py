@@ -9,6 +9,7 @@ Cache Concurrency Tests
 - TTL过期
 - 集群失效通知
 """
+import functools
 import pytest
 import asyncio
 import time
@@ -34,7 +35,8 @@ class TestConcurrentCacheReads:
         cache.set("test_key", "test_value", ttl=300)
         
         # 并发读取
-        tasks = [asyncio.to_thread(cache.get, "test_key") for _ in range(100)]
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, cache.get, "test_key") for _ in range(100)]
         results = await asyncio.gather(*tasks)
         
         # 所有结果应该一致
@@ -50,7 +52,8 @@ class TestConcurrentCacheReads:
             cache.set(f"key_{i}", f"value_{i}", ttl=300)
         
         # 并发读取不同key
-        tasks = [asyncio.to_thread(cache.get, f"key_{i}") for i in range(50)]
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, cache.get, f"key_{i}") for i in range(50)]
         results = await asyncio.gather(*tasks)
         
         # 验证结果
@@ -66,9 +69,10 @@ class TestConcurrentCacheReads:
         cache.set("hot_key", "hot_value", ttl=300)
         
         # 高并发读取
+        loop = asyncio.get_event_loop()
         tasks = []
         for _ in range(500):
-            tasks.append(asyncio.to_thread(cache.get, "hot_key"))
+            tasks.append(loop.run_in_executor(None, cache.get, "hot_key"))
         
         await asyncio.gather(*tasks)
         
@@ -86,8 +90,9 @@ class TestConcurrentCacheWrites:
         cache = MemoryCache(max_size=100)
         
         # 并发写入同一key
+        loop = asyncio.get_event_loop()
         tasks = [
-            asyncio.to_thread(cache.set, "test_key", f"value_{i}", ttl=300)
+            loop.run_in_executor(None, functools.partial(cache.set, "test_key", f"value_{i}", ttl=300))
             for i in range(100)
         ]
         await asyncio.gather(*tasks)
@@ -103,8 +108,9 @@ class TestConcurrentCacheWrites:
         cache = MemoryCache(max_size=1000)
         
         # 并发写入不同key
+        loop = asyncio.get_event_loop()
         tasks = [
-            asyncio.to_thread(cache.set, f"key_{i}", f"value_{i}", ttl=300)
+            loop.run_in_executor(None, functools.partial(cache.set, f"key_{i}", f"value_{i}", ttl=300))
             for i in range(100)
         ]
         await asyncio.gather(*tasks)
@@ -212,8 +218,9 @@ class TestCacheConcurrentDelete:
             cache.set(f"key_{i}", f"value_{i}", ttl=300)
         
         # 并发删除
+        loop = asyncio.get_event_loop()
         tasks = [
-            asyncio.to_thread(cache.delete, f"key_{i}")
+            loop.run_in_executor(None, cache.delete, f"key_{i}")
             for i in range(50)
         ]
         results = await asyncio.gather(*tasks)
@@ -282,16 +289,19 @@ class TestCacheCluster:
         # 注册到集群
         cache1.subscribe(cache2)
         
+        # 在cache2中写入数据（模拟缓存同步前的数据）
+        cache2.set("key", "value", ttl=300)
+        
+        # 确认cache2有数据
+        assert cache2.get("key") == "value"
+        
         # 取消订阅
         cache1.unsubscribe("node2")
-        
-        # 写入数据
-        cache1.set("key", "value", ttl=300)
         
         # 通知（不应该影响cache2）
         cache1._notify_subscribers("delete", "key")
         
-        # cache2应该仍然有数据
+        # cache2应该仍然有数据（因为已取消订阅）
         assert cache2.get("key") == "value"
 
 
@@ -424,7 +434,8 @@ class TestCacheRaceConditions:
             return value
         
         # 并发执行
-        tasks = [asyncio.to_thread(check_and_set) for _ in range(10)]
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, check_and_set) for _ in range(10)]
         results = await asyncio.gather(*tasks)
         
         # 至少有一个成功
@@ -446,7 +457,8 @@ class TestCacheRaceConditions:
             return value
         
         # 并发执行
-        tasks = [asyncio.to_thread(increment) for _ in range(100)]
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, increment) for _ in range(100)]
         await asyncio.gather(*tasks)
         
         # 最终值可能小于100（因为竞态），但应该大于0
