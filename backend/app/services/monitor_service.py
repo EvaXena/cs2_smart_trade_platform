@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class DistributedLock:
     """Redis 分布式锁"""
     
-    def __init__(self, redis_client, key: str, ttl: int = 60):
+    def __init__(self, redis_client, key: str, ttl: int = 300):
         self._redis = redis_client
         self._key = f"lock:{key}"
         self._ttl = ttl
@@ -199,19 +199,23 @@ class PriceMonitor:
                             )
                             
                             if price_data:
-                                # 更新数据库
-                                item.current_price = float(price_data.get("lowest_price", 0))
-                                item.volume_24h = int(price_data.get("volume", 0))
+                                new_price = float(price_data.get("lowest_price", 0))
                                 
-                                # 记录价格历史
-                                history = PriceHistory(
-                                    item_id=item.id,
-                                    source="buff",
-                                    price=item.current_price,
-                                )
-                                self.db.add(history)
+                                # 只有价格变化时才更新和记录历史 (P1-问题6)
+                                if item.current_price is None or abs(new_price - item.current_price) > 0.01:
+                                    # 更新数据库
+                                    item.current_price = new_price
+                                    item.volume_24h = int(price_data.get("volume", 0))
+                                    
+                                    # 记录价格历史（仅价格变化时）
+                                    history = PriceHistory(
+                                        item_id=item.id,
+                                        source="buff",
+                                        price=new_price,
+                                    )
+                                    self.db.add(history)
                                 
-                                # 检查监控规则
+                                # 检查监控规则（价格即使没变化也要检查，可能有其他触发条件）
                                 await self.check_monitors(item)
                         
                         except Exception as e:

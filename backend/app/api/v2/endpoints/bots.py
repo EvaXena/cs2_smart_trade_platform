@@ -3,6 +3,7 @@
 机器人端点 v2
 增强版 - 完整的CRUD操作和启动/停止控制
 """
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,8 @@ from app.schemas.bot import (
     BotInventoryItem,
     BotTradeResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

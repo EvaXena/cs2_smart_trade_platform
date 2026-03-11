@@ -151,3 +151,37 @@ async def test_logout(client: AsyncClient):
             headers={"Authorization": f"Bearer {token}"}
         )
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_login_atomic_race_condition():
+    """
+    测试登录尝试原子性 (第44轮 P0)
+    验证 Lua 脚本实现的原子检查+更新
+    """
+    import asyncio
+    from app.api.v1.endpoints.auth import _check_and_record_login_attempt_atomic
+    
+    # 清理测试数据
+    from app.core.redis_manager import get_redis
+    redis_client = await get_redis()
+    await redis_client.delete("login:attempts:test_race_user")
+    await redis_client.delete("login:locked:test_race_user")
+    
+    # 模拟5次失败登录
+    for i in range(5):
+        can_login, attempts, _ = await _check_and_record_login_attempt_atomic(
+            "test_race_user", record_attempt=True
+        )
+        assert can_login == True, f"第{i+1}次应该允许登录"
+    
+    # 第6次应该被锁定
+    can_login, attempts, error_msg = await _check_and_record_login_attempt_atomic(
+        "test_race_user", record_attempt=True
+    )
+    assert can_login == False, "第6次应该被锁定"
+    assert error_msg.startswith("locked:"), "应该返回锁定信息"
+    
+    # 清理
+    await redis_client.delete("login:attempts:test_race_user")
+    await redis_client.delete("login:locked:test_race_user")

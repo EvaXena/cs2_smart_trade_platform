@@ -48,78 +48,129 @@ _LOCKED_ACCOUNTS_PREFIX = "login:locked:"
 MAX_AGE_SECONDS = 900  # 15分钟
 
 
+# Lua 脚本：原子检查+更新登录尝试
+# 返回值: [can_login, attempts_count, error_message]
+# can_login: 1=允许登录, 0=拒绝
+LOGIN_CHECK_AND_RECORD_SCRIPT = """
+local attempts_key = KEYS[1]
+local locked_key = KEYS[2]
+local max_attempts = tonumber(ARGV[1])
+local lockout_seconds = tonumber(ARGV[2])
+local current_time = tonumber(ARGV[3])
+local max_age_seconds = tonumber(ARGV[4])
+local record_attempt = tonumber(ARGV[5])  -- 1=记录尝试, 0=仅检查
+
+-- 检查是否被锁定
+local locked_until = redis.call("get", locked_key)
+if locked_until then
+    local locked_time = tonumber(locked_until)
+    if current_time < locked_time then
+        local remaining = locked_time - current_time
+        return {0, 0, "locked:" .. remaining}
+    else
+        -- 解除锁定
+        redis.call("del", locked_key)
+        redis.call("del", attempts_key)
+    end
+end
+
+-- 获取当前尝试记录
+local attempts_data = redis.call("get", attempts_key)
+local attempts = {}
+if attempts_data then
+    attempts = cjson.decode(attempts_data)
+end
+
+-- 清理过期记录
+local valid_attempts = {}
+for _, ts in ipairs(attempts) do
+    if current_time - ts < max_age_seconds then
+        table.insert(valid_attempts, ts)
+    end
+end
+
+-- 检查是否超限
+if #valid_attempts >= max_attempts then
+    -- 锁定账户
+    local locked_time = current_time + lockout_seconds
+    redis.call("setex", locked_key, lockout_seconds, locked_time)
+    redis.call("del", attempts_key)
+    return {0, #valid_attempts, "locked:" .. lockout_seconds}
+end
+
+-- 记录新的登录尝试
+if record_attempt == 1 then
+    table.insert(valid_attempts, current_time)
+    redis.call("setex", attempts_key, max_age_seconds, cjson.encode(valid_attempts))
+end
+
+return {1, #valid_attempts, ""}
+"""
+
+
 async def _cleanup_old_attempts(username: str, max_age_seconds: int = 900):
     """清理旧的登录尝试记录（Redis TTL 自动处理）"""
     pass  # Redis 通过 TTL 自动清理
 
 
-async def _check_login_attempts(username: str) -> bool:
-    """检查是否超过登录尝试限制"""
+async def _check_and_record_login_attempt_atomic(username: str, record_attempt: bool = True) -> Tuple[bool, int, Optional[str]]:
+    """
+    原子检查并记录登录尝试（使用 Lua 脚本）
+    
+    返回: (can_login, attempts_count, error_message)
+    """
     client = await get_redis()
+    
+    attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
+    locked_key = f"{_LOCKED_ACCOUNTS_PREFIX}{username}"
     current_time = time.time()
     
-    # 检查是否被锁定
-    locked_key = f"{_LOCKED_ACCOUNTS_PREFIX}{username}"
-    locked_until = await client.get(locked_key)
+    # 执行 Lua 脚本
+    result = await client.eval(
+        LOGIN_CHECK_AND_RECORD_SCRIPT,
+        2,  # keys 数量
+        attempts_key, locked_key,  # KEYS[1], KEYS[2]
+        settings.LOGIN_MAX_ATTEMPTS,  # ARGV[1]
+        settings.LOGIN_LOCKOUT_MINUTES * 60,  # ARGV[2]
+        current_time,  # ARGV[3]
+        MAX_AGE_SECONDS,  # ARGV[4]
+        1 if record_attempt else 0  # ARGV[5]
+    )
     
-    if locked_until:
-        locked_time = float(locked_until)
-        if current_time < locked_time:
-            remaining = int(locked_time - current_time)
+    can_login = result[0] == 1
+    attempts_count = result[1]
+    error_msg = result[2]
+    
+    if not can_login and error_msg:
+        if error_msg.startswith("locked:"):
+            lockout_seconds = int(error_msg.split(":")[1])
+            remaining = lockout_seconds - (time.time() - current_time)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"登录尝试过多，请 {remaining} 秒后重试"
+                detail=f"登录尝试过多，请 {int(remaining)} 秒后重试"
             )
-        else:
-            # 解除锁定
-            await client.delete(locked_key)
-            attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
-            await client.delete(attempts_key)
     
-    # 检查尝试次数
-    attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
-    attempts_data = await client.get(attempts_key)
+    return can_login, attempts_count, error_msg if error_msg else None
+
+
+async def _check_login_attempts(username: str) -> bool:
+    """检查是否超过登录尝试限制（仅检查，不记录）"""
+    can_login, _, error_msg = await _check_and_record_login_attempt_atomic(username, record_attempt=False)
     
-    if attempts_data:
-        attempts = json.loads(attempts_data)
-        # 清理过期记录
-        attempts = [ts for ts in attempts if current_time - ts < MAX_AGE_SECONDS]
-        
-        if len(attempts) >= settings.LOGIN_MAX_ATTEMPTS:
-            # 锁定账户
-            lockout_seconds = settings.LOGIN_LOCKOUT_MINUTES * 60
-            locked_until = current_time + lockout_seconds
-            await client.setex(locked_key, lockout_seconds, str(locked_until))
-            
-            # 同时清理尝试记录
-            await client.delete(attempts_key)
-            
-            logger.warning(f"账户 {username} 因登录尝试过多已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟")
+    if not can_login and error_msg:
+        if error_msg.startswith("locked:"):
+            lockout_seconds = int(error_msg.split(":")[1])
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"登录尝试过多，账户已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟"
+                detail=f"登录尝试过多，账户已被锁定 {lockout_seconds // 60} 分钟"
             )
     
     return True
 
 
 async def _record_login_attempt(username: str):
-    """记录登录尝试"""
-    client = await get_redis()
-    current_time = time.time()
-    
-    attempts_key = f"{_LOGIN_ATTEMPTS_PREFIX}{username}"
-    attempts_data = await client.get(attempts_key)
-    
-    if attempts_data:
-        attempts = json.loads(attempts_data)
-    else:
-        attempts = []
-    
-    attempts.append(current_time)
-    
-    # 保留15分钟内的记录
-    await client.setex(attempts_key, 900, json.dumps(attempts))
+    """记录登录尝试（原子操作）"""
+    await _check_and_record_login_attempt_atomic(username, record_attempt=True)
 
 
 def validate_password_strength(password: str) -> Tuple[bool, str]:

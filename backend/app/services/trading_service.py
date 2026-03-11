@@ -203,8 +203,8 @@ class TradingEngine:
         if buy_platform == "buff" and not self.buff_client:
             raise Exception("未设置 BUFF 客户端")
         
-        # 1. 买入
-        buy_result = await self.execute_buy(item_id, max_price=999999)
+        # 1. 买入 (使用配置的最大交易价格 P1-问题4)
+        buy_result = await self.execute_buy(item_id, max_price=settings.MAX_SINGLE_TRADE)
         
         if not buy_result.success:
             return buy_result

@@ -300,39 +300,111 @@ async def trigger_monitor(
         )
     
     # 实现实际的监控触发逻辑
-    # 根据监控类型执行相应的检查
-    try:
-        if monitor.monitor_type == 'price':
-            # 价格监控：检查目标价格是否达到
-            from app.services.pricing import PricingService
-            pricing_service = PricingService()
-            # 获取最新价格并比较
-            current_price = await pricing_service.get_item_price(monitor.target_url)
-            if current_price and current_price <= float(monitor.threshold_price or 0):
-                monitor.trigger_count += 1
-                monitor.last_triggered = datetime.utcnow()
-        elif monitor.monitor_type == 'inventory':
-            # 库存监控：检查库存变化
-            from app.services.steam import SteamService
-            steam_service = SteamService()
-            inventory = await steam_service.get_inventory(monitor.bot_id)
-            if inventory:
-                monitor.trigger_count += 1
-                monitor.last_triggered = datetime.utcnow()
-        elif monitor.monitor_type == 'profit':
-            # 利润监控：检查利润机会
-            from app.services.buff import BuffService
-            buff_service = BuffService()
-            opportunities = await buff_service.check_profit_opportunities()
-            if opportunities:
-                monitor.trigger_count += 1
-                monitor.last_triggered = datetime.utcnow()
-    except Exception as e:
-        # 记录错误但不影响主流程
-        import logging
-        logging.error(f"监控触发失败: {str(e)}")
+    # 根据监控条件类型执行相应的检查
+    triggered = False
+    trigger_message = ""
     
-    monitor.last_triggered = datetime.utcnow()
+    try:
+        # 获取关联的物品
+        from app.models.item import Item
+        
+        if monitor.item_id:
+            item_result = await db.execute(
+                select(Item).where(Item.id == monitor.item_id)
+            )
+            item = item_result.scalar_one_or_none()
+            
+            if item and monitor.condition_type:
+                if monitor.condition_type == 'price_below':
+                    # 价格低于阈值
+                    if item.current_price and item.current_price <= float(monitor.threshold or 0):
+                        triggered = True
+                        trigger_message = f"{item.name} 当前价格 {item.current_price} 低于阈值 {monitor.threshold}"
+                        
+                elif monitor.condition_type == 'price_above':
+                    # 价格高于阈值
+                    if item.current_price and item.current_price >= float(monitor.threshold or 0):
+                        triggered = True
+                        trigger_message = f"{item.name} 当前价格 {item.current_price} 高于阈值 {monitor.threshold}"
+                        
+                elif monitor.condition_type == 'arbitrage':
+                    # 套利机会检查
+                    if item.current_price and item.steam_lowest_price:
+                        profit = item.steam_lowest_price * 0.85 - item.current_price
+                        if profit >= float(monitor.threshold or 0):
+                            triggered = True
+                            trigger_message = f"{item.name} 发现套利机会，利润: {profit:.2f}元"
+                            
+                elif monitor.condition_type == 'price_drop':
+                    # 价格跌破（需要价格历史）
+                    if item.current_price and item.previous_price:
+                        drop_percent = (item.previous_price - item.current_price) / item.previous_price * 100
+                        if drop_percent >= float(monitor.threshold or 0):
+                            triggered = True
+                            trigger_message = f"{item.name} 价格跌破 {drop_percent:.1f}%"
+                            
+                elif monitor.condition_type == 'price_rise':
+                    # 价格涨破（需要价格历史）
+                    if item.current_price and item.previous_price:
+                        rise_percent = (item.current_price - item.previous_price) / item.previous_price * 100
+                        if rise_percent >= float(monitor.threshold or 0):
+                            triggered = True
+                            trigger_message = f"{item.name} 价格涨破 {rise_percent:.1f}%"
+        
+        # 如果触发监控，记录日志
+        if triggered:
+            monitor.trigger_count += 1
+            monitor.last_triggered = datetime.utcnow()
+            monitor.status = 'running'
+            
+            # 创建监控日志
+            log = MonitorLog(
+                task_id=monitor.id,
+                trigger_type='triggered',
+                message=trigger_message,
+                price_data=f'{{"price": {item.current_price if item else 0}}}'
+            )
+            db.add(log)
+            
+            logger.info(f"监控任务 {monitor.name} 触发: {trigger_message}")
+            
+            # 如果配置了自动操作
+            if monitor.action == 'auto_buy' and item:
+                try:
+                    from app.services.trading_service import TradingEngine
+                    trading_engine = TradingEngine(db)
+                    buy_result = await trading_engine.execute_buy(
+                        item_id=item.id,
+                        max_price=float(monitor.threshold),
+                        user_id=monitor.user_id
+                    )
+                    if buy_result.get("success"):
+                        log.message += f" | 自动买入成功"
+                    else:
+                        log.message += f" | 自动买入失败: {buy_result.get('message')}"
+                except Exception as buy_error:
+                    logger.error(f"自动买入失败: {buy_error}")
+                    log.message += f" | 自动买入异常: {str(buy_error)}"
+                    
+        else:
+            # 未触发，记录为跳过
+            log = MonitorLog(
+                task_id=monitor.id,
+                trigger_type='skipped',
+                message=trigger_message or "条件未满足",
+            )
+            db.add(log)
+            
+    except Exception as e:
+        logger.error(f"监控触发失败: {e}")
+        # 记录错误日志
+        log = MonitorLog(
+            task_id=monitor.id,
+            trigger_type='error',
+            message=f"监控执行错误: {str(e)}"
+        )
+        db.add(log)
+    
     monitor.updated_at = datetime.utcnow()
     
     await db.commit()
