@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from enum import Enum
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, Dict
 from functools import wraps
 from datetime import datetime
 
@@ -191,7 +191,7 @@ class CircuitBreakerOpen(Exception):
 class CircuitBreakerDecorator:
     """熔断器装饰器"""
     
-    _breakers: dict[str, CircuitBreaker] = {}
+    _breakers: Dict[str, CircuitBreaker] = {}
     
     @classmethod
     def get_breaker(cls, name: str = "default", **kwargs) -> CircuitBreaker:

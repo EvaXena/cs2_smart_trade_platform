@@ -306,13 +306,19 @@ class SessionManager:
         """获取 Session 统计信息"""
         r = await self._get_redis()
         
-        # 统计 keys
-        session_keys = await r.keys(f"{self.SESSION_PREFIX}*")
-        token_keys = await r.keys(f"{self.TOKEN_PREFIX}*")
+        # 使用 scan_iter 替代 keys() 提高性能（keys() 会阻塞 Redis）
+        session_count = 0
+        token_count = 0
+        
+        async for _ in r.scan_iter(match=f"{self.SESSION_PREFIX}*", count=100):
+            session_count += 1
+        
+        async for _ in r.scan_iter(match=f"{self.TOKEN_PREFIX}*", count=100):
+            token_count += 1
         
         return {
-            "active_sessions": len(session_keys),
-            "active_tokens": len(token_keys),
+            "active_sessions": session_count,
+            "active_tokens": token_count,
             "session_ttl": self.session_ttl,
             "token_ttl": self.token_ttl
         }

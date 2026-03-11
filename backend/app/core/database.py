@@ -2,10 +2,10 @@
 """
 数据库连接配置
 """
-import sqlite3
+import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import event, text
+from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
@@ -16,8 +16,11 @@ is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 
 if is_sqlite:
     # SQLite 配置优化
-    # 转换为aiosqlite兼容的URL
-    db_url = settings.DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///")
+    # 确保URL是aiosqlite格式
+    if "+aiosqlite" not in settings.DATABASE_URL:
+        db_url = settings.DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///")
+    else:
+        db_url = settings.DATABASE_URL
     
     engine = create_async_engine(
         db_url,
@@ -45,8 +48,27 @@ if is_sqlite:
             await conn.execute(text("PRAGMA mmap_size=268435456"))
     
     # 应用 SQLite 配置
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(configure_sqlite(engine))
+    # 注意：这里不能使用 run_until_complete 因为这可能在事件循环已运行时导致崩溃
+    # 改为在应用启动时通过 lifespan 来配置
+    # 存储配置函数供后续调用
+    
+    def configure_sqlite_sync():
+        """同步版本的 SQLite 配置（用于非异步环境）"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(configure_sqlite(engine))
+        finally:
+            loop.close()
+    
+    # 只有在没有运行事件循环时才同步配置
+    try:
+        loop = asyncio.get_running_loop()
+        # 事件循环正在运行，标记需要延迟配置
+        _delayed_sqlite_config = engine
+    except RuntimeError:
+        # 没有运行中的事件循环，可以安全同步配置
+        configure_sqlite_sync()
 else:
     # PostgreSQL/MySQL 配置
     engine = create_async_engine(

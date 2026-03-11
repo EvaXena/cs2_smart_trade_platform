@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-03-11
+
+### Added
+- **熔断器 (Circuit Breaker)**: 新增 `circuit_breaker.py` 实现，防止外部服务故障导致级联失败
+  - 三态转换 (CLOSED → OPEN → HALF_OPEN → CLOSED)
+  - 可配置失败阈值和恢复超时
+- **Session 共享**: 新增 `session_manager.py`，支持分布式 Session 管理
+- **CLI 管理工具**: 新增 `cli.py`，提供命令行管理接口
+- **异步缓存操作**: cache.py 新增 `aset`、`adelete`、`aclear` 异步方法
+- **部署文档**: 新增 `deployment.md`, `production.md`, `monitoring.md`, `troubleshooting.md`
+- **Stats 图表**: 前端 Stats.vue 新增 ECharts 图表展示
+
+### Changed
+- **SQLite 优化**: database.py 新增 SQLite 专用配置
+  - WAL 模式（提高并发性能）
+  - busy_timeout 配置
+  - 外键约束启用
+  - 缓存和内存优化
+- **Redis 连接检查**: `is_connected` 改为异步方法，使用 ping() 检测连接状态
+- **Core 模块导出**: `__init__.py` 统一导出熔断器和 Session 管理器
+
+### Fixed
+- **P2-1**: Buff 客户端 LRU 缓存限制问题
+- **P2-2**: 幂等性检查使用 SETNX 实现原子操作
+- **P2-3**: 监控中间件添加定期清理机制
+
+---
+
 ## [1.0.0] - 2026-03-11
 
 ### Added

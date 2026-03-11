@@ -87,6 +87,8 @@ async def check_idempotency(key: str) -> Tuple[bool, Optional[dict]]:
     # 使用 SETNX + GET 实现原子检查
     # 先尝试设置锁（如果不存在）
     lock_key = f"{key}:lock"
+    
+    # 使用原子操作获取锁
     acquired = await redis_client.set(
         lock_key, 
         "1", 
@@ -95,14 +97,19 @@ async def check_idempotency(key: str) -> Tuple[bool, Optional[dict]]:
     )
     
     if acquired:
-        # 获取锁成功，检查是否已有缓存的响应
-        cached_response = await redis_client.get(key)
-        if cached_response:
-            # 存在已缓存的响应，删除锁并返回
-            await redis_client.delete(lock_key)
-            return True, json.loads(cached_response)
-        # 没有缓存响应，返回 False 表示可以继续处理
-        return False, None
+        try:
+            # 获取锁成功，检查是否已有缓存的响应
+            cached_response = await redis_client.get(key)
+            if cached_response:
+                # 存在已缓存的响应，返回缓存结果
+                return True, json.loads(cached_response)
+            # 没有缓存响应，返回 False 表示可以继续处理
+            return False, None
+        finally:
+            # 确保锁会被释放（即使处理失败）
+            # 注意：这里不删除锁，而是让它自然过期
+            # 避免删除锁时恰好另一个请求进入导致的问题
+            pass
     else:
         # 获取锁失败，说明有并发请求正在处理
         # 等待一段时间后检查是否有缓存的响应

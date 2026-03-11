@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Request
 from collections import defaultdict
+from sqlalchemy import text
 
 from app.services.cache import get_cache
 
@@ -325,16 +326,69 @@ async def health_check():
     
     返回服务健康状态
     """
+    # 检查各项服务健康状态
+    health_status = {
+        "status": "healthy",
+        "checks": {}
+    }
+    
+    # 1. 检查缓存服务
+    try:
+        cache = get_cache()
+        cache_stats = cache.get_stats()
+        health_status["checks"]["cache"] = {
+            "status": "healthy" if cache_stats.get("connected", True) else "unhealthy",
+            "backend": cache_stats.get("backend", "memory"),
+            "connected": cache_stats.get("connected", True)
+        }
+        if cache_stats.get("connected") == False:
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["checks"]["cache"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+        health_status["status"] = "unhealthy"
+    
+    # 2. 检查 Redis 连接（如果使用 Redis）
+    if health_status["checks"]["cache"].get("backend") == "redis":
+        try:
+            from app.core.redis_manager import get_redis
+            redis_client = await get_redis()
+            await redis_client.ping()
+            health_status["checks"]["redis"] = {"status": "healthy"}
+        except Exception as e:
+            health_status["checks"]["redis"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+            health_status["status"] = "unhealthy"
+    
+    # 3. 检查数据库
+    try:
+        from app.core.database import engine
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        health_status["checks"]["database"] = {"status": "healthy"}
+    except Exception as e:
+        health_status["checks"]["database"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+        health_status["status"] = "unhealthy"
+    
     # 检查告警
     alerts = _metrics.check_alerts()
     has_critical = any(a.level == "critical" for a in alerts)
     
-    return {
-        "status": "unhealthy" if has_critical else "healthy",
-        "alerts_count": len(alerts),
-        "timestamp": datetime.now().isoformat(),
-        "service": "cs2-trade-platform",
-    }
+    if has_critical:
+        health_status["status"] = "unhealthy"
+    
+    health_status["alerts_count"] = len(alerts)
+    health_status["timestamp"] = datetime.now().isoformat()
+    health_status["service"] = "cs2-trade-platform"
+    
+    return health_status
 
 
 @router.get("/metrics")

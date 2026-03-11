@@ -419,6 +419,9 @@ class CacheManager:
         
         # 当前使用的后端
         self._current_backend: CacheBackend = backend
+        
+        # 自动清理定时器（仅内存缓存）
+        self._cleanup_task = None
     
     async def initialize(self) -> None:
         """初始化缓存"""
@@ -436,6 +439,28 @@ class CacheManager:
                 self._current_backend = CacheBackend.REDIS
         
         logger.info(f"Cache initialized with backend: {self._current_backend.value}")
+        
+        # 启动自动清理任务（仅内存缓存）
+        await self._start_cleanup_task()
+    
+    async def _start_cleanup_task(self) -> None:
+        """启动后台清理任务"""
+        if self._current_backend == CacheBackend.MEMORY:
+            # 每5分钟清理一次过期缓存
+            import asyncio
+            
+            async def cleanup_loop():
+                while True:
+                    await asyncio.sleep(300)  # 5分钟
+                    try:
+                        cleaned = self._memory_cache.cleanup_expired()
+                        if cleaned > 0:
+                            logger.debug(f"Cleaned up {cleaned} expired cache entries")
+                    except Exception as e:
+                        logger.error(f"Cache cleanup error: {e}")
+            
+            # 创建后台任务（不阻塞启动）
+            asyncio.create_task(cleanup_loop())
     
     @property
     def backend(self) -> CacheBackend:
