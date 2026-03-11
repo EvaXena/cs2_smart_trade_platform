@@ -43,6 +43,7 @@ class User(Base):
     orders = relationship("Order", back_populates="user")
     inventory = relationship("Inventory", back_populates="user")
     monitors = relationship("MonitorTask", back_populates="user")
+    notifications = relationship("Notification", back_populates="user")
 
     # 属性：用于解密访问（使用延迟解密，避免模块加载时调用）
     @property

@@ -2,16 +2,19 @@
 """
 WebSocket API 端点
 提供实时双向通信支持
+增强版：支持JWT认证、自动重连、心跳检测
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from typing import Optional, List
 import json
 import logging
 from datetime import datetime
+import asyncio
+from jose import JWTError, jwt, ExpiredSignatureError
 
 from app.services.notification_service import ws_manager, notification_service, NotificationType
-from app.core.security import get_current_user
-from app.core.security import decode_token
+from app.core.security import get_current_user, decode_token
+from app.core.config import settings
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -19,25 +22,96 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class ConnectionManager:
-    """WebSocket连接管理器（简化的连接状态）"""
+class TokenExpiredError(Exception):
+    """Token过期异常"""
+    pass
+
+
+class WebSocketAuthManager:
+    """WebSocket认证管理器"""
     
     @staticmethod
-    async def keep_alive(websocket: WebSocket):
-        """保持连接活跃"""
+    def validate_token(token: str) -> Optional[dict]:
+        """
+        验证并解析JWT token
+        返回payload或None
+        """
+        try:
+            # 首先检查是否过期
+            payload = jwt.decode(
+                token, 
+                settings.SECRET_KEY, 
+                algorithms=[settings.ALGORITHM],
+                options={"verify_exp": True}
+            )
+            return payload
+        except ExpiredSignatureError:
+            # Token已过期
+            logger.warning("WebSocket token expired")
+            return None
+        except JWTError as e:
+            logger.warning(f"WebSocket token validation failed: {e}")
+            return None
+    
+    @staticmethod
+    def get_token_expiry(token: str) -> Optional[datetime]:
+        """获取token过期时间"""
+        try:
+            payload = jwt.decode(
+                token,
+                settings.SECRET_KEY,
+                algorithms=[settings.ALGORITHM],
+                options={"verify_signature": False}
+            )
+            exp = payload.get("exp")
+            if exp:
+                return datetime.fromtimestamp(exp)
+        except Exception:
+            pass
+        return None
+    
+    @staticmethod
+    async def handle_token_refresh(websocket: WebSocket, old_token: str) -> Optional[str]:
+        """
+        处理token刷新
+        返回新token或None
+        """
+        try:
+            # 发送token刷新请求
+            await websocket.send_json({
+                "type": "token_refresh_request",
+                "message": "Token即将过期，请刷新",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            return None
+        except Exception as e:
+            logger.error(f"Token refresh handling failed: {e}")
+            return None
+
+
+class ConnectionManager:
+    """WebSocket连接管理器"""
+    
+    # 心跳配置
+    HEARTBEAT_INTERVAL = 30  # 心跳间隔(秒)
+    HEARTBEAT_TIMEOUT = 10   # 心跳超时(秒)
+    
+    @staticmethod
+    async def keep_alive(websocket: WebSocket, user_id: int):
+        """保持连接活跃 - 发送ping"""
         try:
             while True:
-                # 发送ping
                 await websocket.send_json({
                     "type": "ping",
                     "timestamp": datetime.utcnow().isoformat()
                 })
-                # 等待pong
+                
                 try:
-                    data = await asyncio.wait_for(websocket.receive_json(), timeout=30)
+                    data = await asyncio.wait_for(websocket.receive_json(), timeout=ConnectionManager.HEARTBEAT_TIMEOUT)
                     if data.get("type") == "pong":
                         continue
                 except asyncio.TimeoutError:
+                    logger.warning(f"Heartbeat timeout for user {user_id}")
                     break
         except Exception:
             pass
@@ -54,7 +128,6 @@ class ConnectionManager:
             })
         
         elif msg_type == "subscribe":
-            # 订阅主题
             topic = message.get("topic")
             logger.info(f"User {current_user.id} subscribed to {topic}")
             await websocket.send_json({
@@ -64,7 +137,6 @@ class ConnectionManager:
             })
         
         elif msg_type == "unsubscribe":
-            # 取消订阅
             topic = message.get("topic")
             logger.info(f"User {current_user.id} unsubscribed from {topic}")
             await websocket.send_json({
@@ -74,17 +146,30 @@ class ConnectionManager:
             })
         
         elif msg_type == "heartbeat":
-            # 心跳
             await websocket.send_json({
                 "type": "heartbeat_ack",
                 "timestamp": datetime.utcnow().isoformat()
             })
         
+        elif msg_type == "auth":
+            # 处理认证消息(用于token刷新)
+            new_token = message.get("token")
+            if new_token:
+                payload = WebSocketAuthManager.validate_token(new_token)
+                if payload:
+                    await websocket.send_json({
+                        "type": "auth_success",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "auth_failed",
+                        "message": "Invalid token",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+        
         else:
             logger.warning(f"Unknown message type: {msg_type}")
-
-
-import asyncio
 
 
 @router.websocket("/ws")
@@ -99,24 +184,26 @@ async def websocket_endpoint(
     1. 认证模式：使用token进行身份验证
     2. 匿名模式：无需认证（限制功能）
     
-    消息格式：
-    - 发送: {"type": "ping"|"subscribe"|"heartbeat"|..., ...}
-    - 接收: {"type": "notification"|"pong"|... , ...}
+    增强功能：
+    - JWT token解析和验证
+    - token过期自动通知
+    - 自动心跳检测
     """
     user_id: Optional[int] = None
+    token_expiry: Optional[datetime] = None
     
     # 尝试认证
     if token:
-        try:
-            from app.core.security import decode_token
-            payload = decode_token(token)
-            if payload:
-                user_id = payload.get("sub")
-                if isinstance(user_id, str):
-                    user_id = int(user_id)
-        except Exception as e:
-            logger.warning(f"WebSocket auth failed: {e}")
-            # 允许匿名连接
+        payload = WebSocketAuthManager.validate_token(token)
+        if payload:
+            user_id = payload.get("sub")
+            if isinstance(user_id, str):
+                user_id = int(user_id)
+            # 获取token过期时间
+            token_expiry = WebSocketAuthManager.get_token_expiry(token)
+        else:
+            # Token无效或过期
+            logger.warning("WebSocket authentication failed: invalid or expired token")
     
     # 如果是认证用户，建立连接
     if user_id:
@@ -124,12 +211,18 @@ async def websocket_endpoint(
         
         try:
             # 发送连接成功消息
-            await websocket.send_json({
+            connect_msg = {
                 "type": "connected",
                 "user_id": user_id,
                 "timestamp": datetime.utcnow().isoformat(),
                 "message": "WebSocket连接已建立"
-            })
+            }
+            
+            # 添加token过期信息
+            if token_expiry:
+                connect_msg["token_expires_at"] = token_expiry.isoformat()
+            
+            await websocket.send_json(connect_msg)
             
             # 消息处理循环
             while True:
@@ -139,6 +232,16 @@ async def websocket_endpoint(
                     
                     try:
                         message = json.loads(data)
+                        
+                        # 检查token是否即将过期(还有5分钟)
+                        if token_expiry:
+                            time_until_expiry = (token_expiry - datetime.utcnow()).total_seconds()
+                            if 0 < time_until_expiry < 300:  # 5分钟内
+                                await websocket.send_json({
+                                    "type": "token_expiring",
+                                    "expires_in": int(time_until_expiry),
+                                    "timestamp": datetime.utcnow().isoformat()
+                                })
                         
                         # 处理各类消息
                         await ConnectionManager.handle_client_message(

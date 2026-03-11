@@ -1,10 +1,74 @@
 /**
  * API 客户端
+ * 统一的错误处理和错误提示
  */
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
-import { ElMessage } from 'element-plus'
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+
+// 错误类型定义
+interface ApiError {
+  status: number
+  message: string
+  detail?: string | Record<string, any>
+  rate_limit?: {
+    limit: number
+    remaining: number
+    reset: number
+    type: string
+  }
+}
+
+// 错误码映射
+const ERROR_MESSAGES: Record<number, string> = {
+  400: '请求参数错误',
+  401: '登录已过期，请重新登录',
+  403: '没有权限执行此操作',
+  404: '请求的资源不存在',
+  408: '请求超时，请重试',
+  422: '数据验证失败',
+  429: '请求过于频繁，请稍后再试',
+  500: '服务器内部错误',
+  502: '网关错误',
+  503: '服务暂时不可用',
+  504: '网关超时',
+}
+
+// 获取错误消息
+function getErrorMessage(error: AxiosError<ApiError>): string {
+  const status = error.response?.status
+  const data = error.response?.data
+  
+  // 优先使用后端返回的detail
+  if (data?.detail) {
+    if (typeof data.detail === 'string') {
+      return data.detail
+    }
+    // 如果是对象，尝试提取第一个错误消息
+    if (typeof data.detail === 'object') {
+      const firstKey = Object.keys(data.detail)[0]
+      if (firstKey && Array.isArray(data.detail[firstKey])) {
+        return `${firstKey}: ${data.detail[firstKey][0]}`
+      }
+    }
+  }
+  
+  // 使用预设错误消息
+  if (status && ERROR_MESSAGES[status]) {
+    return ERROR_MESSAGES[status]
+  }
+  
+  // 网络错误
+  if (!error.response) {
+    if (error.code === 'ECONNABORTED') {
+      return '请求超时，请检查网络后重试'
+    }
+    return '网络连接失败，请检查网络'
+  }
+  
+  return '请求失败，请稍后重试'
+}
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: `${baseURL}/api/v1`,
@@ -33,25 +97,40 @@ apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
     return response.data
   },
-  (error) => {
-    if (error.response) {
-      const { status, data } = error.response
-      
-      if (status === 401) {
-        ElMessage.error('登录已过期，请重新登录')
-        localStorage.removeItem('token')
+  async (error: AxiosError<ApiError>) => {
+    const status = error.response?.status
+    const data = error.response?.data
+    
+    // 获取错误消息
+    const message = getErrorMessage(error)
+    
+    // 处理429限流错误 - 显示详细重置时间
+    if (status === 429 && data?.rate_limit) {
+      const { reset, type } = data.rate_limit
+      ElMessage.error({
+        message: `${message} (${type}限流 ${reset}秒后重置)`,
+        duration: 5000,
+      })
+    } else if (status === 401) {
+      // 401错误 - 清除token并跳转登录
+      ElMessage.error(message)
+      localStorage.removeItem('token')
+      // 延迟跳转，让用户看到错误消息
+      setTimeout(() => {
         window.location.href = '/login'
-      } else if (status === 403) {
-        ElMessage.error(data.detail || '没有权限')
-      } else if (status === 404) {
-        ElMessage.error(data.detail || '资源不存在')
-      } else if (status >= 500) {
-        ElMessage.error('服务器错误')
-      } else {
-        ElMessage.error(data.detail || '请求失败')
-      }
+      }, 1500)
+    } else if (status === 403) {
+      // 403错误 - 显示错误，可能需要管理员权限
+      ElMessage.error(message)
+    } else if (status && status >= 500) {
+      // 5xx错误 - 服务器错误
+      ElMessage.error(message)
+    } else if (status && status >= 400) {
+      // 4xx错误 - 客户端错误
+      ElMessage.warning(message)
     } else {
-      ElMessage.error('网络错误')
+      // 网络错误
+      ElMessage.error(message)
     }
     
     return Promise.reject(error)

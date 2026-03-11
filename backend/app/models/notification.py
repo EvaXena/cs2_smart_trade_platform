@@ -3,7 +3,8 @@
 通知模型
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Enum as SQLEnum, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
 
@@ -41,8 +42,8 @@ class Notification(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     
-    # 用户ID
-    user_id = Column(Integer, nullable=False, index=True)
+    # 用户ID - 外键关联
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
     # 通知类型
     notification_type = Column(
@@ -80,6 +81,9 @@ class Notification(Base):
     # 时间戳
     created_at = Column(DateTime, default=func.now(), nullable=False)
     read_at = Column(DateTime, nullable=True)
+    
+    # 关联关系
+    user = relationship("User", back_populates="notifications")
     
     def __repr__(self):
         return f"<Notification {self.id}: {self.title}>"
