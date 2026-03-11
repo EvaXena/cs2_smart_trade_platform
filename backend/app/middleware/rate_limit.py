@@ -271,8 +271,178 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class ConnectionLimitMiddleware(BaseHTTPMiddleware):
+    """
+    并发连接数限制中间件
+    
+    使用Redis Set存储活跃连接，限制最大并发连接数
+    防止DDoS攻击和资源耗尽
+    """
+    
+    # 默认最大并发连接数
+    DEFAULT_MAX_CONNECTIONS = 100
+    
+    # Redis key前缀
+    _REDIS_KEY_PREFIX = "connection_limit:"
+    _ACTIVE_CONNECTIONS_KEY = "active_connections"
+    
+    def __init__(self, app, max_connections: int = DEFAULT_MAX_CONNECTIONS):
+        super().__init__(app)
+        self.max_connections = max_connections
+        
+        # 内存降级方案
+        self._memory_connections: set = set()
+        self._memory_lock = threading.Lock()
+    
+    async def _get_redis(self):
+        """获取Redis连接"""
+        return await get_redis()
+    
+    def _get_client_id(self, request: Request) -> str:
+        """获取客户端唯一标识"""
+        # 优先使用X-Forwarded-For
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
+        
+        # 如果有用户ID，添加用户标识
+        # 从请求属性中获取（需要先经过认证中间件设置）
+        user_id = getattr(request.state, "user_id", None)
+        if user_id:
+            return f"user:{user_id}:{client_ip}"
+        
+        return f"ip:{client_ip}"
+    
+    async def _check_connection_limit(self, client_id: str) -> Tuple[bool, Optional[Dict]]:
+        """
+        检查并记录连接
+        
+        Returns:
+            (是否允许, 限制信息)
+        """
+        try:
+            r = await self._get_redis()
+            key = f"{self._REDIS_KEY_PREFIX}{self._ACTIVE_CONNECTIONS_KEY}"
+            
+            # 尝试添加连接
+            added = await r.sadd(key, client_id)
+            
+            if added == 0:
+                # 连接已存在，说明是同一个客户端的多个连接
+                pass
+            
+            # 获取当前连接数
+            current_count = await r.scard(key)
+            
+            # 设置TTL（5分钟自动清理）
+            await r.expire(key, 300)
+            
+            if current_count > self.max_connections:
+                # 超限，移除刚添加的连接
+                await r.srem(key, client_id)
+                
+                logger.warning(
+                    f"Connection limit exceeded for {client_id}: "
+                    f"{current_count}/{self.max_connections}"
+                )
+                
+                return False, {
+                    "current_connections": current_count,
+                    "max_connections": self.max_connections,
+                    "retry_after": 60,
+                }
+            
+            return True, {
+                "current_connections": current_count,
+                "max_connections": self.max_connections,
+            }
+            
+        except Exception as e:
+            logger.error(f"Redis connection limit error: {e}")
+            # 降级到内存方案
+            return self._check_memory_connection_limit(client_id)
+    
+    def _check_memory_connection_limit(self, client_id: str) -> Tuple[bool, Optional[Dict]]:
+        """内存降级方案"""
+        with self._memory_lock:
+            current_count = len(self._memory_connections)
+            
+            if current_count >= self.max_connections:
+                logger.warning(
+                    f"Memory connection limit exceeded: "
+                    f"{current_count}/{self.max_connections}"
+                )
+                return False, {
+                    "current_connections": current_count,
+                    "max_connections": self.max_connections,
+                    "retry_after": 60,
+                }
+            
+            self._memory_connections.add(client_id)
+            
+            return True, {
+                "current_connections": current_count + 1,
+                "max_connections": self.max_connections,
+            }
+    
+    async def _release_connection(self, client_id: str):
+        """释放连接"""
+        try:
+            r = await self._get_redis()
+            key = f"{self._REDIS_KEY_PREFIX}{self._ACTIVE_CONNECTIONS_KEY}"
+            await r.srem(key, client_id)
+        except Exception as e:
+            logger.error(f"Failed to release connection: {e}")
+            # 降级到内存
+            with self._memory_lock:
+                self._memory_connections.discard(client_id)
+    
+    async def dispatch(self, request: Request, call_next):
+        # 获取客户端ID
+        client_id = self._get_client_id(request)
+        
+        # 检查连接限制
+        allowed, info = await self._check_connection_limit(client_id)
+        
+        if not allowed:
+            response = JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "服务器繁忙，请稍后重试",
+                    "error": "connection_limit_exceeded",
+                    "retry_after": info["retry_after"],
+                }
+            )
+            response.headers["X-ConnectionLimit-Limit"] = str(info["max_connections"])
+            response.headers["X-ConnectionLimit-Current"] = str(info["current_connections"])
+            response.headers["Retry-After"] = str(info["retry_after"])
+            return response
+        
+        # 处理请求
+        try:
+            response = await call_next(request)
+            
+            # 添加连接限制头
+            response.headers["X-ConnectionLimit-Limit"] = str(self.max_connections)
+            response.headers["X-ConnectionLimit-Current"] = str(info["current_connections"])
+            
+            return response
+        finally:
+            # 释放连接
+            await self._release_connection(client_id)
+
+
 def create_rate_limit_middleware(config: Optional[Dict] = None):
     """创建限流中间件的工厂函数"""
     def middleware(app):
         return RateLimitMiddleware(app, config)
+    return middleware
+
+
+def create_connection_limit_middleware(max_connections: int = 100):
+    """创建连接数限制中间件的工厂函数"""
+    def middleware(app):
+        return ConnectionLimitMiddleware(app, max_connections)
     return middleware

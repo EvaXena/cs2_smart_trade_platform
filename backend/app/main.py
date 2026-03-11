@@ -18,7 +18,7 @@ from app.core.exceptions import register_error_handlers
 from app.api.router import create_api_router
 from app.api.v1.endpoints.monitoring import metrics_middleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware, ConnectionLimitMiddleware
 from app.middleware.audit import audit_middleware
 from app.services.steam_service import SteamAPI
 import logging
@@ -96,6 +96,10 @@ def create_app() -> FastAPI:
     if settings.RATE_LIMIT_ENABLED and not settings.TESTING:
         rate_limit_config = json.loads(settings.RATE_LIMIT_ENDPOINTS)
         app.add_middleware(RateLimitMiddleware, config=rate_limit_config)
+
+    # 并发连接数限制中间件
+    if not settings.TESTING:
+        app.add_middleware(ConnectionLimitMiddleware, max_connections=100)
 
     # 注册路由
     api_router = create_api_router()
