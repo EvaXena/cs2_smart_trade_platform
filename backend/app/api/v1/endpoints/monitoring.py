@@ -74,12 +74,19 @@ class Alert:
 class MetricsCollector:
     """指标收集器"""
     
+    # 响应时间保留时间（秒）- 5分钟
+    RESPONSE_TIME_TTL = 300
+    # 每个端点最大记录数
+    MAX_RESPONSE_TIME_RECORDS = 1000
+    
     def __init__(self):
         self._api_calls: Dict[str, int] = defaultdict(int)
         self._api_errors: Dict[str, int] = defaultdict(int)
         self._response_times: Dict[str, list] = defaultdict(list)
+        self._response_times_timestamps: Dict[str, list] = defaultdict(list)  # 记录时间戳
         self._status_codes: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
         self._start_time = time.time()
+        self._last_cleanup = time.time()
     
     def record_api_call(self, endpoint: str, status_code: int = 200):
         """记录 API 调用"""
@@ -90,13 +97,55 @@ class MetricsCollector:
         if status_code >= 400:
             self._api_errors[endpoint] += 1
     
+    def _cleanup_old_records(self):
+        """清理过期的响应时间记录"""
+        current_time = time.time()
+        
+        # 每60秒执行一次清理
+        if current_time - self._last_cleanup < 60:
+            return
+        
+        self._last_cleanup = current_time
+        
+        for endpoint in list(self._response_times.keys()):
+            times = self._response_times[endpoint]
+            timestamps = self._response_times_timestamps[endpoint]
+            
+            if not times:
+                continue
+            
+            # 按时间清理过期记录
+            valid_indices = [
+                i for i, ts in enumerate(timestamps)
+                if current_time - ts < self.RESPONSE_TIME_TTL
+            ]
+            
+            if len(valid_indices) < len(times):
+                self._response_times[endpoint] = [times[i] for i in valid_indices]
+                self._response_times_timestamps[endpoint] = [timestamps[i] for i in valid_indices]
+            
+            # 限制最大记录数
+            if len(self._response_times[endpoint]) > self.MAX_RESPONSE_TIME_RECORDS:
+                self._response_times[endpoint] = self._response_times[endpoint][-self.MAX_RESPONSE_TIME_RECORDS:]
+                self._response_times_timestamps[endpoint] = self._response_times_timestamps[endpoint][-self.MAX_RESPONSE_TIME_RECORDS:]
+    
     def record_response_time(self, endpoint: str, duration_ms: float):
         """记录响应时间"""
-        # 只保留最近1000条记录
+        # 定期清理旧记录
+        self._cleanup_old_records()
+        
+        # 记录响应时间和时间戳
+        current_time = time.time()
         times = self._response_times[endpoint]
+        timestamps = self._response_times_timestamps[endpoint]
+        
         times.append(duration_ms)
-        if len(times) > 1000:
+        timestamps.append(current_time)
+        
+        # 限制最大记录数
+        if len(times) > self.MAX_RESPONSE_TIME_RECORDS:
             times.pop(0)
+            timestamps.pop(0)
     
     def check_alerts(self) -> List[Alert]:
         """检查告警"""
