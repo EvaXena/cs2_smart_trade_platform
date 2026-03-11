@@ -186,8 +186,8 @@ class AuditLogger:
         if response_status >= 400 and response_body:
             audit_entry["response"] = response_body
         
-        # 序列化为 JSON 字符串 = json.dumps(a
-        log_dataudit_entry, ensure_ascii=False)
+        # 序列化为 JSON 字符串
+        log_data = json.dumps(audit_entry, ensure_ascii=False)
         
         # 如果启用了加密，则加密日志
         if self.encrypt_logs and self._fernet:
