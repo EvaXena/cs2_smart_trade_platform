@@ -48,7 +48,7 @@ class ItemsListResponseV2(BaseModel):
 
 class BatchOperationRequest(BaseModel):
     """批量操作请求"""
-    ids: List[int] = Field(..., min_items=1, max_items=100)
+    ids: List[int] = Field(..., min_length=1, max_length=100)
     action: str
 
 
@@ -69,8 +69,8 @@ async def get_items_v2(
     search: Optional[str] = None,
     rarity: Optional[str] = None,
     exterior: Optional[str] = None,
-    sort_by: str = Query("id", regex="^(id|name|price|recent_sales)$"),
-    sort_order: str = Query("asc", regex="^(asc|desc)$"),
+    sort_by: str = Query("id", pattern="^(id|name|price|recent_sales)$"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

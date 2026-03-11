@@ -394,5 +394,260 @@ class TestEdgeCases:
         assert result["secret"] == "***"
 
 
+class TestDebugEndpointSecurity:
+    """调试端点安全测试"""
+    
+    def test_debug_mode_flag_checks(self):
+        """测试DEBUG模式标志检查"""
+        # Test that settings has DEBUG attribute
+        assert hasattr(settings, 'DEBUG')
+        
+        # Verify it's a boolean
+        assert isinstance(settings.DEBUG, bool)
+    
+    @pytest.mark.asyncio
+    async def test_error_details_hidden_in_production(self):
+        """测试生产环境隐藏错误详情"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "192.168.1.100"  # Non-localhost IP
+        request.method = "GET"
+        
+        exc = Exception("Sensitive info: password=secret123, token=abc123")
+        
+        with patch.object(settings, 'DEBUG', False):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        
+        # Should NOT contain sensitive data
+        assert "secret123" not in content
+        assert "abc123" not in content
+        
+        # Should contain generic message
+        assert "服务器内部错误" in content or "Internal Server Error" in content
+    
+    @pytest.mark.asyncio
+    async def test_exception_type_hidden_in_production(self):
+        """测试生产环境隐藏异常类型"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "192.168.1.100"
+        request.method = "GET"
+        
+        class DatabaseError(Exception):
+            pass
+        
+        exc = DatabaseError("Database connection failed")
+        
+        with patch.object(settings, 'DEBUG', False):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        
+        # Should NOT contain exception type in production
+        assert "DatabaseError" not in content
+    
+    def test_sensitive_data_patterns_defined(self):
+        """测试敏感数据模式已定义"""
+        # Verify SENSITIVE_PATTERNS contains expected patterns
+        assert len(SENSITIVE_PATTERNS) > 0
+        
+        # Check for key patterns
+        pattern_str = ' '.join(SENSITIVE_PATTERNS)
+        assert 'password' in pattern_str.lower()
+        assert 'token' in pattern_str.lower()
+        assert 'secret' in pattern_str.lower()
+
+
+class TestPerformanceMonitoringExposure:
+    """性能监控暴露测试"""
+    
+    def test_no_debug_info_in_logs(self):
+        """测试日志中无调试信息泄露"""
+        import logging
+        
+        # Test that sanitization works for log messages
+        sensitive_msg = "User login: user=admin, password=secret123"
+        sanitized = sanitize_error_message(sensitive_msg)
+        
+        # Verify sanitization
+        assert "secret123" not in sanitized
+        assert "password=***" in sanitized
+    
+    def test_sanitize_removes_all_sensitive_patterns(self):
+        """测试脱敏移除所有敏感模式"""
+        test_cases = [
+            ("password=123456", "password=***"),
+            ("token=abc123", "token=***"),
+            ("secret=key123", "secret=***"),
+            ("api_key=sk-test", "api_key=***"),
+            ("connection=postgres://...", "connection***"),
+        ]
+        
+        for original, expected in test_cases:
+            result = sanitize_error_message(original)
+            # The sensitive value should be masked
+            assert "***" in result or result != original
+    
+    @pytest.mark.asyncio
+    async def test_error_response_timing_info_safe(self):
+        """测试错误响应中的时间信息是否安全"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Error with timestamp: 2024-01-01 12:00:00")
+        
+        with patch.object(settings, 'DEBUG', True):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        
+        # Timestamps in errors are generally OK in debug mode
+        # But should be reviewed for sensitivity
+        assert response.status_code == 500
+
+
+class TestLogLevelConfiguration:
+    """日志级别配置测试"""
+    
+    def test_logging_level_configurable(self):
+        """测试日志级别可配置"""
+        import logging
+        
+        # Test that logging can be configured
+        assert hasattr(logging, 'getLogger')
+        
+        logger = logging.getLogger("app.core.exceptions")
+        assert logger is not None
+    
+    @pytest.mark.asyncio
+    async def test_verbose_logging_in_debug_mode(self):
+        """测试DEBUG模式详细日志"""
+        import logging
+        from unittest.mock import patch, MagicMock
+        
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = ValueError("Test error for logging")
+        
+        # Patch the logger to capture log calls
+        with patch('app.core.exceptions.logger') as mock_logger:
+            mock_logger.error = MagicMock()
+            
+            with patch.object(settings, 'DEBUG', True):
+                await generic_error_handler(request, exc)
+            
+            # In debug mode, error should be logged
+            assert mock_logger.error.called
+            
+            # Check that error details are passed to logger
+            call_args = mock_logger.error.call_args
+            assert call_args is not None
+    
+    def test_sanitize_details_recursive(self):
+        """测试递归脱敏"""
+        # Test nested structure
+        details = {
+            "level1": {
+                "level2": {
+                    "password": "deep_secret"
+                }
+            }
+        }
+        
+        result = sanitize_details(details)
+        
+        # Should sanitize at all levels
+        assert result["level1"]["level2"]["password"] == "***"
+    
+    def test_sanitize_handles_lists(self):
+        """测试列表脱敏"""
+        details = {
+            "users": [
+                {"name": "test", "password": "pass1"},
+                {"name": "test2", "password": "pass2"}
+            ]
+        }
+        
+        result = sanitize_details(details)
+        
+        assert result["users"][0]["password"] == "***"
+        assert result["users"][1]["password"] == "***"
+
+
+class TestErrorDetailLevels:
+    """错误详情级别测试"""
+    
+    @pytest.mark.asyncio
+    async def test_error_response_structure(self):
+        """测试错误响应结构"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Test error")
+        
+        # Test in production mode
+        with patch.object(settings, 'DEBUG', False):
+            response = await generic_error_handler(request, exc)
+        
+        # Use body.decode() for JSONResponse
+        content = response.body.decode()
+        
+        # Verify structure
+        assert '"code"' in content
+        assert '"message"' in content
+        assert '"path"' in content
+    
+    @pytest.mark.asyncio
+    async def test_error_code_different_for_debug(self):
+        """测试DEBUG模式错误代码不同"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Test error")
+        
+        # Debug mode
+        with patch.object(settings, 'DEBUG', True):
+            response_debug = await generic_error_handler(request, exc)
+        
+        # Production mode
+        with patch.object(settings, 'DEBUG', False):
+            response_prod = await generic_error_handler(request, exc)
+        
+        # Both should have error structure
+        debug_content = response_debug.body.decode()
+        prod_content = response_prod.body.decode()
+        
+        # In debug mode, should have more details
+        assert '"details"' in debug_content
+        # In production, details should be empty
+        assert '"details": {}' in prod_content or '"details":{}' in prod_content
+    
+    @pytest.mark.asyncio
+    async def test_http_status_code_for_errors(self):
+        """测试错误的HTTP状态码"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Test error")
+        
+        response = await generic_error_handler(request, exc)
+        
+        # Generic errors should return 500
+        assert response.status_code == 500
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

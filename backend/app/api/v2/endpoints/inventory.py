@@ -39,8 +39,8 @@ async def get_inventory(
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
     rarity: Optional[str] = None,
-    sort_by: str = Query("acquired_at", regex="^(acquired_at|price|name)$"),
-    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    sort_by: str = Query("acquired_at", pattern="^(acquired_at|price|name)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

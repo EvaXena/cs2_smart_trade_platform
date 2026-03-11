@@ -151,7 +151,16 @@ docker-compose up -d
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### 核心接口
+### API 版本
+
+平台提供两个 API 版本：
+
+| 版本 | 前缀 | 状态 | 说明 |
+|------|------|------|------|
+| V1 | `/api/v1/` | 稳定 | 生产环境使用 |
+| V2 | `/api/v2/` | 增强 | 新增功能，扩展参数 |
+
+### 核心接口 (V1)
 
 #### 认证
 ```
@@ -196,6 +205,139 @@ GET    /api/v1/bots                # 机器人列表
 POST   /api/v1/bots                # 添加机器人
 POST   /api/v1/bots/{id}/login     # 登录机器人
 POST   /api/v1/bots/{id}/trade     # 发起交易
+```
+
+### 核心接口 (V2)
+
+V2 API 在 V1 基础上增加了更多功能和过滤参数。所有 V2 端点需要 Bearer Token 认证。
+
+#### 增强的饰品接口
+```
+# 获取饰品列表 - 支持排序和分页
+GET    /api/v2/items?page=1&limit=20&sort_by=price&sort_order=asc
+
+# 搜索过滤
+GET    /api/v2/items?search=龙狙&rarity=legendary&exterior=久经沙场
+
+# 批量操作
+POST   /api/v2/items/batch
+```
+
+#### 增强的库存接口
+```
+# 获取库存 - 支持多维度过滤
+GET    /api/v2/inventory?status=onsale&rarity=uncommon&sort_by=price&sort_order=desc
+
+# 批量操作
+POST   /api/v2/inventory/batch
+```
+
+#### 批量操作请求示例
+
+```bash
+# 批量操作请求
+curl -X POST "http://localhost:8000/api/v2/items/batch" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "delete",
+    "item_ids": [1, 2, 3]
+  }'
+```
+
+#### V2 API 使用示例
+
+```python
+import requests
+
+BASE_URL = "http://localhost:8000/api/v2"
+
+# 获取认证令牌
+def login(username, password):
+    response = requests.post(
+        f"{BASE_URL}/auth/login",
+        data={"username": username, "password": password}
+    )
+    return response.json()["access_token"]
+
+# 获取饰品列表 (V2)
+def get_items(token, page=1, limit=20, sort_by="price", sort_order="asc"):
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(
+        f"{BASE_URL}/items",
+        params={
+            "page": page,
+            "limit": limit,
+            "sort_by": sort_by,
+            "sort_order": sort_order
+        },
+        headers=headers
+    )
+    return response.json()
+
+# 获取库存列表 (V2)
+def get_inventory(token, status=None, rarity=None):
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {}
+    if status:
+        params["status"] = status
+    if rarity:
+        params["rarity"] = rarity
+    response = requests.get(
+        f"{BASE_URL}/inventory",
+        params=params,
+        headers=headers
+    )
+    return response.json()
+
+# 使用示例
+token = login("your_username", "your_password")
+items = get_items(token, page=1, limit=50, sort_by="price", sort_order="asc")
+inventory = get_inventory(token, status="onsale")
+```
+
+```javascript
+// JavaScript/TypeScript 示例
+const BASE_URL = 'http://localhost:8000/api/v2';
+
+const api = {
+  async login(username, password) {
+    const response = await fetch(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await response.json();
+    return data.access_token;
+  },
+
+  async getItems(token, options = {}) {
+    const params = new URLSearchParams({
+      page: options.page || 1,
+      limit: options.limit || 20,
+      sort_by: options.sortBy || 'price',
+      sort_order: options.sortOrder || 'asc'
+    });
+    
+    const response = await fetch(`${BASE_URL}/items?${params}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    return response.json();
+  },
+
+  async getInventory(token, filters = {}) {
+    const params = new URLSearchParams(filters);
+    const response = await fetch(`${BASE_URL}/inventory?${params}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    return response.json();
+  }
+};
+
+// 使用示例
+const token = await api.login('username', 'password');
+const items = await api.getItems(token, { page: 1, limit: 50 });
+const inventory = await api.getInventory(token, { status: 'onsale' });
 ```
 
 ## 📁 项目结构

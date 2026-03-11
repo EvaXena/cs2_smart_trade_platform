@@ -5,6 +5,7 @@
 import pytest
 import asyncio
 import os
+import sys
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -14,10 +15,6 @@ import pytest_asyncio
 # 设置环境变量在导入app之前
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["TESTING"] = "true"
-
-from app.main import app
-from app.core.database import Base, get_db
-from app.core.config import settings
 
 
 # 测试数据库 URL
@@ -35,6 +32,7 @@ def event_loop():
 @pytest_asyncio.fixture(scope="function")
 async def test_db() -> AsyncGenerator[AsyncSession, None]:
     """测试数据库"""
+    from app.core.database import Base
     engine = create_async_engine(
         TEST_DATABASE_URL,
         connect_args={"check_same_thread": False},
@@ -57,6 +55,9 @@ async def test_db() -> AsyncGenerator[AsyncSession, None]:
 @pytest_asyncio.fixture(scope="function")
 async def client(test_db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """测试客户端"""
+    from app.main import app
+    from app.core.database import get_db
+    
     async def override_get_db():
         yield test_db
     

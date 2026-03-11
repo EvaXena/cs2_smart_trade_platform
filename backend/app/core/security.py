@@ -2,8 +2,10 @@
 """
 安全认证模块
 """
+from __future__ import annotations
+
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
@@ -13,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.token_blacklist import check_token_blacklist
-from app.models.user import User
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 # 密码加密上下文
