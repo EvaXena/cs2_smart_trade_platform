@@ -20,14 +20,20 @@ SENSITIVE_PATTERNS = [
     r'(password|passwd|pwd)[=:\s][^\s,}]*',
     r'(secret|token|key|api_key|apikey)[=:\s][^\s,}]*',
     r'(connection|conn|redis|mysql|postgres)[^\s,}]*',
-    r'Bearer\s+[A-Za-z0-9\-._~+/]+=*',
+    r'(Bearer)\s+[A-Za-z0-9\-._~+/]+=*',
 ]
 
 
 def sanitize_error_message(message: str) -> str:
     """脱敏错误消息"""
+    if not message:
+        return message
     for pattern in SENSITIVE_PATTERNS:
-        message = re.sub(pattern, lambda m: m.group(1).split('=')[0].strip() + '=***', message, flags=re.IGNORECASE)
+        try:
+            message = re.sub(pattern, lambda m: m.group(1).split('=')[0].strip() + '=***', message, flags=re.IGNORECASE)
+        except (IndexError, AttributeError):
+            # 如果正则没有捕获组，使用整个匹配替换
+            message = re.sub(pattern, '***', message, flags=re.IGNORECASE)
     return message
 
 

@@ -4,164 +4,395 @@ Debug Mode Tests
 
 测试调试模式下的功能：
 - 错误信息详细程度
+- 敏感数据脱敏
 - 日志级别
-- 性能指标暴露
-- 调试端点
-- 开发工具集成
+- 配置差异
 """
 import pytest
-from unittest.mock import Mock, patch
+import asyncio
+from unittest.mock import Mock, patch, MagicMock
+from fastapi import Request
 from fastapi.testclient import TestClient
+from fastapi.responses import JSONResponse
+import sys
+import os
+
+# 添加项目路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.exceptions import (
+    generic_error_handler,
+    sanitize_error_message,
+    sanitize_details,
+    SENSITIVE_PATTERNS
+)
+from app.core.config import settings
 
 
-class TestErrorMessages:
-    """错误消息测试"""
+class TestSensitiveDataSanitization:
+    """敏感数据脱敏测试"""
     
-    def test_production_error_message_verbose(self):
-        """测试生产环境错误消息简洁"""
-        # TODO: 实现生产环境错误测试
-        pass
+    def test_sanitize_password_in_message(self):
+        """测试消息中密码脱敏"""
+        message = "Database connection failed: password=123456, user=admin"
+        result = sanitize_error_message(message)
+        
+        assert "password=***" in result
+        assert "123456" not in result
+        assert "user=admin" in result  # 非敏感字段保留
     
-    def test_debug_error_message_detailed(self):
-        """测试调试模式错误消息详细"""
-        # TODO: 实现调试模式错误测试
-        pass
+    def test_sanitize_token_in_message(self):
+        """测试消息中Token脱敏"""
+        message = "Auth failed: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        result = sanitize_error_message(message)
+        
+        assert "token=***" in result
+        assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
     
-    def test_sensitive_data_sanitization(self):
-        """测试敏感数据脱敏"""
-        # TODO: 实现脱敏测试
-        pass
+    def test_sanitize_api_key_in_message(self):
+        """测试消息中API Key脱敏"""
+        message = "API error: api_key=sk-1234567890abcdef"
+        result = sanitize_error_message(message)
+        
+        assert "api_key=***" in result
+        assert "sk-1234567890abcdef" not in result
     
-    def test_stack_trace_exposure(self):
-        """测试堆栈跟踪暴露"""
-        # TODO: 实现堆栈跟踪测试
-        pass
+    def test_sanitize_connection_string(self):
+        """测试连接字符串脱敏"""
+        message = "Connection: mysql://user:password@localhost:3306/db"
+        result = sanitize_error_message(message)
+        
+        # 敏感信息被脱敏
+        assert "password" not in result or "***" in result
+    
+    def test_sanitize_bearer_token(self):
+        """测试Bearer Token脱敏"""
+        message = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+        result = sanitize_error_message(message)
+        
+        # Bearer token被脱敏
+        assert "eyJhbGciOiJIUzI1NiJ9" not in result
+    
+    def test_sanitize_secret_in_message(self):
+        """测试Secret脱敏"""
+        message = "Config error: secret=my_super_secret_key"
+        result = sanitize_error_message(message)
+        
+        assert "secret=***" in result
+        assert "my_super_secret_key" not in result
 
 
-class TestLogging:
-    """日志测试"""
+class TestSanitizeDetails:
+    """详情字典脱敏测试"""
     
-    def test_log_level_by_environment(self):
-        """测试按环境的日志级别"""
-        # TODO: 实现日志级别测试
-        pass
+    def test_sanitize_dict_password(self):
+        """测试字典中密码字段脱敏"""
+        details = {
+            "username": "admin",
+            "password": "secret123",
+            "database": "testdb"
+        }
+        result = sanitize_details(details)
+        
+        assert result["password"] == "***"
+        assert result["username"] == "admin"
+        assert result["database"] == "testdb"
     
-    def test_debug_logging_content(self):
-        """测试调试日志内容"""
-        # TODO: 实现调试日志测试
-        pass
+    def test_sanitize_nested_dict(self):
+        """测试嵌套字典脱敏"""
+        details = {
+            "config": {
+                "database": {
+                    "host": "localhost",
+                    "password": "dbpass"
+                }
+            }
+        }
+        result = sanitize_details(details)
+        
+        assert result["config"]["database"]["password"] == "***"
+        assert result["config"]["database"]["host"] == "localhost"
     
-    def test_log_format_json(self):
-        """测试JSON格式日志"""
-        # TODO: 实现JSON日志测试
-        pass
+    def test_sanitize_list_of_dicts(self):
+        """测试字典列表脱敏"""
+        details = {
+            "users": [
+                {"name": "Alice", "password": "pass1"},
+                {"name": "Bob", "password": "pass2"}
+            ]
+        }
+        result = sanitize_details(details)
+        
+        assert result["users"][0]["password"] == "***"
+        assert result["users"][1]["password"] == "***"
+        assert result["users"][0]["name"] == "Alice"
     
-    def test_request_id_logging(self):
-        """测试请求ID日志"""
-        # TODO: 实现请求ID日志测试
-        pass
+    def test_sanitize_depth_limit(self):
+        """测试递归深度限制"""
+        # 创建深层嵌套
+        details = {"level1": {"level2": {"level3": {"level4": {"password": "deep"}}}}}
+        result = sanitize_details(details, depth=0)
+        
+        # 应该达到深度限制
+        assert "..." in str(result) or result.get("level1", {}).get("level2", {}).get("level3", {}).get("level4", {}).get("password") == "***"
+    
+    def test_sanitize_credential_key(self):
+        """测试credential字段脱敏"""
+        details = {
+            "credential": "important_data",
+            "token": "bearer_token"
+        }
+        result = sanitize_details(details)
+        
+        assert result["credential"] == "***"
+        assert result["token"] == "***"
 
 
-class TestDebugEndpoints:
-    """调试端点测试"""
+class TestDebugModeErrorHandler:
+    """DEBUG模式错误处理器测试"""
     
-    def test_health_endpoint_details(self):
-        """测试健康检查端点详情"""
-        # TODO: 实现健康检查测试
-        pass
+    @pytest.mark.asyncio
+    async def test_debug_true_returns_full_error(self):
+        """测试DEBUG=True返回完整错误"""
+        # Mock request
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        # Mock exception
+        exc = Exception("Database connection failed: password=secret123")
+        
+        # 设置DEBUG=True
+        with patch.object(settings, 'DEBUG', True):
+            response = await generic_error_handler(request, exc)
+        
+        assert response.status_code == 500
+        
+        # 获取响应内容
+        content = response.body.decode()
+        assert "Database connection failed" in content or "password=***" in content
     
-    def test_metrics_endpoint(self):
-        """测试指标端点"""
-        # TODO: 实现指标端点测试
-        pass
+    @pytest.mark.asyncio
+    async def test_debug_false_returns_sanitized(self):
+        """测试DEBUG=False返回脱敏错误"""
+        # Mock request
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        # Mock exception
+        exc = Exception("Database connection failed: password=secret123")
+        
+        # 设置DEBUG=False
+        with patch.object(settings, 'DEBUG', False):
+            response = await generic_error_handler(request, exc)
+        
+        assert response.status_code == 500
+        
+        # 获取响应内容
+        content = response.body.decode()
+        assert "服务器内部错误" in content or "Internal Server Error" in content
     
-    def test_debug_endpoints_disabled_in_production(self):
-        """测试生产环境禁用调试端点"""
-        # TODO: 实现调试端点禁用测试
-        pass
+    @pytest.mark.asyncio
+    async def test_sensitive_data_in_error_is_masked(self):
+        """测试错误中的敏感数据被脱敏"""
+        # Mock request
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        # Mock exception with sensitive data
+        exc = Exception("Auth error: token=my_secret_token and password=hidden123")
+        
+        # 设置DEBUG=True（仍然应该脱敏）
+        with patch.object(settings, 'DEBUG', True):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        
+        # 敏感数据应该被脱敏
+        assert "my_secret_token" not in content
+        assert "hidden123" not in content
     
-    def test_profiler_endpoint(self):
-        """测试性能分析端点"""
-        # TODO: 实现性能分析测试
-        pass
+    @pytest.mark.asyncio
+    async def test_exception_type_exposed_in_debug(self):
+        """测试DEBUG模式下暴露异常类型"""
+        # Mock request
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        # 自定义异常
+        class CustomError(Exception):
+            pass
+        
+        exc = CustomError("Custom error message")
+        
+        with patch.object(settings, 'DEBUG', True):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        assert "CustomError" in content
 
 
-class TestPerformanceMonitoring:
-    """性能监控测试"""
+class TestDebugConfiguration:
+    """调试配置测试"""
     
-    def test_request_timing_exposed(self):
-        """测试请求计时暴露"""
-        # TODO: 实现请求计时测试
-        pass
+    def test_debug_flag_exists(self):
+        """测试DEBUG标志存在"""
+        assert hasattr(settings, 'DEBUG')
     
-    def test_slow_query_logging(self):
-        """测试慢查询日志"""
-        # TODO: 实现慢查询测试
-        pass
-    
-    def test_memory_usage_exposed(self):
-        """测试内存使用暴露"""
-        # TODO: 实现内存使用测试
-        pass
-    
-    def test_connection_pool_stats(self):
-        """测试连接池统计"""
-        # TODO: 实现连接池测试
-        pass
+    def test_debug_can_be_boolean(self):
+        """测试DEBUG是布尔值"""
+        assert isinstance(settings.DEBUG, bool)
 
 
-class TestDevelopmentTools:
-    """开发工具测试"""
+class TestSensitivePatterns:
+    """敏感信息模式测试"""
     
-    def test_docs_endpoint_available(self):
-        """测试API文档可用"""
-        # TODO: 实现文档测试
-        pass
+    def test_patterns_defined(self):
+        """测试敏感模式已定义"""
+        assert len(SENSITIVE_PATTERNS) > 0
     
-    def test_openapi_schema_available(self):
-        """测试OpenAPI模式可用"""
-        # TODO: 实现OpenAPI测试
-        pass
+    def test_pattern_covers_password(self):
+        """测试模式覆盖password"""
+        assert any('password' in p for p in SENSITIVE_PATTERNS)
     
-    def test_reload_enabled(self):
-        """测试热重载启用"""
-        # TODO: 实现热重载测试
-        pass
+    def test_pattern_covers_token(self):
+        """测试模式覆盖token"""
+        assert any('token' in p for p in SENSITIVE_PATTERNS)
+    
+    def test_pattern_covers_secret(self):
+        """测试模式覆盖secret"""
+        assert any('secret' in p for p in SENSITIVE_PATTERNS)
+    
+    def test_pattern_covers_bearer(self):
+        """测试模式覆盖Bearer"""
+        assert any('Bearer' in p for p in SENSITIVE_PATTERNS)
 
 
-class TestSecurityInDebug:
-    """调试模式安全测试"""
+class TestLoggingInDebug:
+    """调试模式日志测试"""
     
-    def test_sensitive_env_vars_hidden(self):
-        """测试敏感环境变量隐藏"""
-        # TODO: 实现环境变量测试
-        pass
-    
-    def test_internal_paths_hidden(self):
-        """测试内部路径隐藏"""
-        # TODO: 实现路径隐藏测试
-        pass
-    
-    def test_debug_toolbar_disabled(self):
-        """测试调试工具栏禁用"""
-        # TODO: 实现工具栏测试
-        pass
+    @pytest.mark.asyncio
+    async def test_error_logged_in_debug(self):
+        """测试DEBUG模式下记录错误日志"""
+        import logging
+        from unittest.mock import MagicMock
+        
+        # Mock request
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = ValueError("Test error")
+        
+        # 使用patch来捕获日志
+        with patch('app.core.exceptions.logger') as mock_logger:
+            with patch.object(settings, 'DEBUG', True):
+                await generic_error_handler(request, exc)
+            
+            # 验证error被调用
+            assert mock_logger.error.called
 
 
-class TestConfiguration:
-    """配置测试"""
+class TestErrorResponseStructure:
+    """错误响应结构测试"""
     
-    def test_debug_flag_override(self):
-        """测试调试标志覆盖"""
-        # TODO: 实现配置覆盖测试
-        pass
+    @pytest.mark.asyncio
+    async def test_error_response_has_code(self):
+        """测试错误响应包含code"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Test error")
+        
+        with patch.object(settings, 'DEBUG', False):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        assert '"code"' in content or "'code'" in content
     
-    def test_development_defaults(self):
-        """测试开发默认值"""
-        # TODO: 实现默认值测试
-        pass
+    @pytest.mark.asyncio
+    async def test_error_response_has_message(self):
+        """测试错误响应包含message"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Test error")
+        
+        with patch.object(settings, 'DEBUG', False):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        assert '"message"' in content or "'message'" in content
     
-    def test_production_hardening(self):
-        """测试生产环境加固"""
-        # TODO: 实现生产加固测试
-        pass
+    @pytest.mark.asyncio
+    async def test_error_response_has_path(self):
+        """测试错误响应包含path"""
+        request = Mock(spec=Request)
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.method = "GET"
+        
+        exc = Exception("Test error")
+        
+        with patch.object(settings, 'DEBUG', True):
+            response = await generic_error_handler(request, exc)
+        
+        content = response.body.decode()
+        assert "/api/test" in content
+
+
+class TestEdgeCases:
+    """边界情况测试"""
+    
+    def test_sanitize_empty_string(self):
+        """测试空字符串脱敏"""
+        result = sanitize_error_message("")
+        assert result == ""
+    
+    def test_sanitize_none(self):
+        """测试None值脱敏"""
+        result = sanitize_error_message(None)
+        # 应该处理None
+    
+    def test_sanitize_no_sensitive_data(self):
+        """测试无敏感数据"""
+        message = "Normal error message without sensitive data"
+        result = sanitize_error_message(message)
+        assert result == message
+    
+    def test_sanitize_multiple_passwords(self):
+        """测试多个密码脱敏"""
+        message = "password=123 and another_password=456"
+        result = sanitize_error_message(message)
+        
+        assert "123" not in result
+        assert "456" not in result
+    
+    def test_sanitize_dict_with_all_sensitive(self):
+        """测试全部是敏感字段的字典"""
+        details = {
+            "password": "secret",
+            "token": "bearer",
+            "secret": "key"
+        }
+        result = sanitize_details(details)
+        
+        assert result["password"] == "***"
+        assert result["token"] == "***"
+        assert result["secret"] == "***"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
