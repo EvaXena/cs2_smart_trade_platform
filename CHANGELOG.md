@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-03-11
+
+### Added
+- **前端WebSocket客户端**: 新增 `frontend/src/services/websocketClient.ts`
+  - WebSocket连接管理
+  - 断线自动重连（指数退避算法）
+  - 心跳机制（30秒间隔，10秒超时）
+  - 与后端 `/ws/notifications` 端点对接
+  - 集成现有前端通知系统
+- **日志脱敏测试**: 新增 `backend/tests/test_logging_sanitizer.py`
+  - `SensitiveDataFilter` 各字段脱敏效果测试
+  - JWT/Token/密码等敏感信息过滤验证
+  - `SensitiveFieldFilter` 结构化字段脱敏测试
+  - 集成测试覆盖
+- **并发连接数限制**: 新增 `backend/app/middleware/rate_limit.py`
+  - `ConnectionLimitMiddleware` 类
+  - 使用Redis Set存储活跃连接
+  - 最大并发连接数默认100
+  - 内存降级方案
+
+### Changed
+- 前端通知系统集成WebSocket实时推送
+- 后端限流中间件增强
+
+### Fixed
+- WebSocket客户端前端缺失问题
+- 日志脱敏测试覆盖不足
+- 并发连接数限制缺失
+
+---
+
 ## [1.2.0] - 2026-03-11
 
 ### Added
