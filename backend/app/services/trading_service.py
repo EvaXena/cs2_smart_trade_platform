@@ -18,6 +18,7 @@ from app.services.steam_service import SteamAPI, get_steam_api
 from app.services.steam_market import get_steam_market_service
 from app.core.config import settings
 from app.core.response import ServiceResponse, success_response, error_response
+from app.core.task_registry import get_task_registry
 # 导入 validators 中的验证函数
 from app.utils.validators import (
     validate_price as validator_validate_price,
@@ -42,6 +43,7 @@ class TradingEngine:
         self.buff_client = None
         self.steam_api = get_steam_api()
         self.steam_market = get_steam_market_service()
+        self._task_registry = get_task_registry()
     
     def set_buff_client(self, cookie: str):
         """设置 BUFF 客户端"""
@@ -228,6 +230,39 @@ class TradingEngine:
         
         if user_id is None:
             raise ValueError("execute_arbitrage 必须提供 user_id 参数")
+        
+        # 注册任务到 TaskRegistry 以便追踪
+        task_name = f"arbitrage_{item_id}_{datetime.utcnow().timestamp()}"
+        
+        async def do_arbitrage():
+            return await self._execute_arbitrage_internal(
+                item_id, buy_platform, sell_platform, 
+                sell_price, quantity, user_id, timeout
+            )
+        
+        # 使用 TaskRegistry 注册任务
+        task_id = await self._task_registry.register(
+            task_name,
+            do_arbitrage(),
+            on_failure=lambda e: logger.error(f"搬砖任务失败: {e}")
+        )
+        
+        return ServiceResponse.ok(
+            data={"task_id": task_id, "task_name": task_name},
+            message="搬砖任务已启动"
+        )
+    
+    async def _execute_arbitrage_internal(
+        self,
+        item_id: int,
+        buy_platform: str,
+        sell_platform: str,
+        sell_price: float,
+        quantity: int,
+        user_id: int,
+        timeout: int
+    ) -> Dict[str, Any]:
+        """执行搬砖的内部实现"""
         
         # 获取饰品信息用于后续卖出
         item_result = await self.db.execute(

@@ -1,0 +1,237 @@
+# -*- coding: utf-8 -*-
+"""
+限流器
+"""
+import asyncio
+import logging
+import time
+from typing import Dict, Optional
+from dataclasses import dataclass
+from collections import defaultdict
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RateLimitConfig:
+    """限流配置"""
+    requests: int  # 时间窗口内允许的请求数
+    window: int    # 时间窗口（秒）
+    burst: int     # 突发限制
+
+
+class TokenBucket:
+    """令牌桶算法实现"""
+    
+    def __init__(self, capacity: int, refill_rate: float):
+        self.capacity = capacity  # 桶容量
+        self.tokens = float(capacity)  # 当前令牌数
+        self.refill_rate = refill_rate  # 每秒补充令牌数
+        self.last_refill = time.time()
+    
+    def _refill(self) -> None:
+        """补充令牌"""
+        now = time.time()
+        elapsed = now - self.last_refill
+        self.tokens = min(
+            self.capacity,
+            self.tokens + elapsed * self.refill_rate
+        )
+        self.last_refill = now
+    
+    async def acquire(self, tokens: int = 1) -> bool:
+        """
+        获取令牌
+        
+        Args:
+            tokens: 需要获取的令牌数
+        
+        Returns:
+            是否成功获取
+        """
+        self._refill()
+        
+        if self.tokens >= tokens:
+            self.tokens -= tokens
+            return True
+        
+        # 等待足够令牌
+        wait_time = (tokens - self.tokens) / self.refill_rate
+        await asyncio.sleep(wait_time)
+        
+        self._refill()
+        if self.tokens >= tokens:
+            self.tokens -= tokens
+            return True
+        
+        return False
+
+
+class RateLimiter:
+    """
+    限流器
+    
+    支持：
+    - 滑动窗口限流
+    - 令牌桶算法（用于突发流量）
+    - 从settings读取配置
+    """
+    
+    def __init__(self):
+        self._buckets: Dict[str, TokenBucket] = {}
+        self._window_requests: Dict[str, list] = defaultdict(list)
+        self._enabled = settings.RATE_LIMIT_ENABLED
+        self._default_requests = settings.RATE_LIMIT_DEFAULT_REQUESTS
+        self._default_window = settings.RATE_LIMIT_DEFAULT_WINDOW
+        self._default_burst = settings.RATE_LIMIT_DEFAULT_BURST
+    
+    def _get_config(self, key: str) -> RateLimitConfig:
+        """
+        获取限流配置（从settings读取）
+        
+        Args:
+            key: 限流标识（通常是endpoint）
+        
+        Returns:
+            限流配置
+        """
+        # 尝试从settings获取特定配置
+        endpoint_config = settings.get_rate_limit_config(key)
+        
+        if endpoint_config:
+            return RateLimitConfig(
+                requests=endpoint_config.get("requests", self._default_requests),
+                window=endpoint_config.get("window", self._default_window),
+                burst=endpoint_config.get("burst", self._default_burst)
+            )
+        
+        # 返回默认配置
+        return RateLimitConfig(
+            requests=self._default_requests,
+            window=self._default_window,
+            burst=self._default_burst
+        )
+    
+    async def check_rate_limit(
+        self,
+        key: str,
+        user_id: Optional[int] = None
+    ) -> tuple[bool, Optional[float]]:
+        """
+        检查是否触发限流
+        
+        Args:
+            key: 限流标识（通常是endpoint）
+            user_id: 用户ID（可选）
+        
+        Returns:
+            (是否允许, 剩余时间)
+        """
+        if not self._enabled:
+            return True, None
+        
+        # 如果有用户ID，加入到key中实现用户级别限流
+        if user_id:
+            key = f"{key}:{user_id}"
+        
+        config = self._get_config(key)
+        now = time.time()
+        
+        # 滑动窗口清理
+        window_start = now - config.window
+        self._window_requests[key] = [
+            t for t in self._window_requests[key]
+            if t > window_start
+        ]
+        
+        # 检查是否超限
+        if len(self._window_requests[key]) >= config.requests:
+            # 计算剩余时间
+            oldest = min(self._window_requests[key])
+            retry_after = oldest + config.window - now
+            logger.warning(f"限流触发: key={key}, retry_after={retry_after:.2f}s")
+            return False, retry_after
+        
+        # 记录请求
+        self._window_requests[key].append(now)
+        
+        return True, None
+    
+    async def wait_if_needed(
+        self,
+        key: str,
+        user_id: Optional[int] = None
+    ) -> None:
+        """
+        如果触发限流则等待
+        
+        Args:
+            key: 限流标识
+            user_id: 用户ID
+        """
+        allowed, retry_after = await self.check_rate_limit(key, user_id)
+        
+        if not allowed and retry_after:
+            logger.info(f"限流等待: key={key}, wait={retry_after:.2f}s")
+            await asyncio.sleep(retry_after)
+    
+    def get_remaining(
+        self,
+        key: str,
+        user_id: Optional[int] = None
+    ) -> int:
+        """
+        获取剩余请求数
+        
+        Args:
+            key: 限流标识
+            user_id: 用户ID
+        
+        Returns:
+            剩余请求数
+        """
+        if not self._enabled:
+            return -1
+        
+        if user_id:
+            key = f"{key}:{user_id}"
+        
+        config = self._get_config(key)
+        now = time.time()
+        
+        # 清理过期记录
+        window_start = now - config.window
+        self._window_requests[key] = [
+            t for t in self._window_requests[key]
+            if t > window_start
+        ]
+        
+        return max(0, config.requests - len(self._window_requests[key]))
+    
+    def reset(self, key: str, user_id: Optional[int] = None) -> None:
+        """
+        重置限流记录
+        
+        Args:
+            key: 限流标识
+            user_id: 用户ID
+        """
+        if user_id:
+            key = f"{key}:{user_id}"
+        
+        self._window_requests.pop(key, None)
+        self._buckets.pop(key, None)
+
+
+# 全局单例
+_rate_limiter_instance: Optional[RateLimiter] = None
+
+
+def get_rate_limiter() -> RateLimiter:
+    """获取限流器单例"""
+    global _rate_limiter_instance
+    if _rate_limiter_instance is None:
+        _rate_limiter_instance = RateLimiter()
+    return _rate_limiter_instance

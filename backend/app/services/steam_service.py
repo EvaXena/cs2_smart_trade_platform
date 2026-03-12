@@ -15,6 +15,8 @@ import aiohttp
 
 from app.core.config import settings
 from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen, CircuitBreaker
+from app.core.anti_crawler import get_anti_crawler
+from app.core.anti_crawler import get_anti_crawler
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ class SteamAPI:
         self.base_url = "https://api.steampowered.com"
         self.market_url = "https://steamcommunity.com/market"
         self._session: Optional[aiohttp.ClientSession] = None
+        self._anti_crawler = get_anti_crawler()
+        # 集成反爬虫管理器
+        self._anti_crawler = get_anti_crawler()
     
     async def health_check(self) -> bool:
         """
@@ -123,12 +128,18 @@ class SteamAPI:
         **kwargs
     ) -> Dict[str, Any]:
         """发送请求"""
+        # 使用反爬虫管理器
+        await self._anti_crawler.wait_if_needed(url)
+        
         headers = kwargs.pop("headers", {})
         headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         })
+        # 合并反爬虫headers
+        headers.update(self._anti_crawler.get_headers())
         
         timeout = kwargs.pop("timeout", None)
+        start_time = time.time()
         
         try:
             async with self.session.get(
@@ -138,20 +149,37 @@ class SteamAPI:
                 timeout=timeout or self.DEFAULT_TIMEOUT,
                 **kwargs
             ) as response:
+                response_time = time.time() - start_time
+                status_code = response.status
+                
+                # 请求后处理（统计、更新模式识别等）
+                await self._anti_crawler.after_request(
+                    endpoint,
+                    success=response.status == 200,
+                    response_time=response_time,
+                    status_code=status_code
+                )
+                
                 if response.status != 200:
                     logger.error(f"Steam API Error: {response.status}")
                     raise Exception(f"Steam API Error: {response.status}")
                 
                 return await response.json()
         except asyncio.TimeoutError:
+            await self._anti_crawler.after_request(endpoint, success=False, status_code=408)
             logger.error(f"Steam API 请求超时: {url}")
             raise SteamAPIError(f"请求超时: {url}")
         except CircuitBreakerOpen as e:
+            await self._anti_crawler.after_request(endpoint, success=False, status_code=503)
             logger.warning(f"Steam API 熔断器开启: {e}")
             raise SteamAPICircuitOpen(str(e))
         except aiohttp.ClientError as e:
+            await self._anti_crawler.after_request(endpoint, success=False, status_code=503)
             logger.error(f"Steam API 连接错误: {e}")
             raise SteamAPIError(f"连接错误: {e}")
+        except Exception as e:
+            await self._anti_crawler.after_request(endpoint, success=False, status_code=500)
+            raise
     
     @circuit_breaker(name="steam_api", failure_threshold=5, recovery_timeout=30)
     async def get_player_summaries(self, steam_ids: List[str]) -> List[Dict[str, Any]]:
@@ -335,6 +363,7 @@ class SteamTrade:
         self.session_token = session_token
         self.ma_file = ma_file
         self.is_logged_in = False
+        self._anti_crawler = get_anti_crawler()
     
     async def login(self) -> bool:
         """登录 Steam"""
@@ -439,7 +468,8 @@ class SteamTrade:
         if not self.session_token:
             raise Exception("需要 session_token 才能访问市场")
         
-        await asyncio.sleep(STEAM_MARKET_API_DELAY)  # 避免触发反爬虫
+        # 使用反爬虫管理器
+        await self._anti_crawler.wait_if_needed(self.market_url)
         
         session = await self._get_market_session()
         
@@ -507,7 +537,8 @@ class SteamTrade:
         if not self.session_token:
             raise Exception("需要 session_token 才能创建挂单")
         
-        await asyncio.sleep(STEAM_MARKET_API_DELAY)
+        # 使用反爬虫管理器
+        await self._anti_crawler.wait_if_needed(self.market_url)
         
         session = await self._get_market_session()
         
@@ -579,7 +610,8 @@ class SteamTrade:
         if not self.session_token:
             raise Exception("需要 session_token 才能取消挂单")
         
-        await asyncio.sleep(STEAM_MARKET_API_DELAY)
+        # 使用反爬虫管理器
+        await self._anti_crawler.wait_if_needed(self.market_url)
         
         session = await self._get_market_session()
         

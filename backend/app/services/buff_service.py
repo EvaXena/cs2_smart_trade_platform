@@ -14,6 +14,8 @@ import aiohttp
 
 from app.core.config import settings
 from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen
+from app.core.anti_crawler import get_anti_crawler
+from app.core.anti_crawler import get_anti_crawler
 
 
 class BuffAPIError(Exception):

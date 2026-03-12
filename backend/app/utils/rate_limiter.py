@@ -24,11 +24,12 @@ class RateLimiter:
         # User ID -> [(timestamp, count)]
         self.user_requests: Dict[int, list] = defaultdict(list)
         
-        # 配置
-        self.ip_limit = 100       # IP每分钟最大请求数
-        self.ip_window = 60       # IP时间窗口(秒)
-        self.user_limit = 200    # 用户每分钟最大请求数
-        self.user_window = 60     # 用户时间窗口(秒)
+        # 从配置读取限流参数
+        from app.core.config import settings
+        self.ip_limit = settings.RATE_LIMIT_DEFAULT_REQUESTS  # IP每分钟最大请求数
+        self.ip_window = settings.RATE_LIMIT_DEFAULT_WINDOW   # IP时间窗口(秒)
+        self.user_limit = settings.RATE_LIMIT_DEFAULT_REQUESTS * 2  # 用户每分钟最大请求数
+        self.user_window = settings.RATE_LIMIT_DEFAULT_WINDOW      # 用户时间窗口(秒)
         
         # 清理间隔
         self.last_cleanup = time.time()
@@ -68,7 +69,7 @@ class RateLimiter:
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
         
-真实        # 获取IP
+        return client_ip
         real_ip = request.headers.get("X-Real-IP")
         if real_ip:
             return real_ip
