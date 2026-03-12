@@ -16,7 +16,6 @@ import aiohttp
 from app.core.config import settings
 from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen, CircuitBreaker
 from app.core.anti_crawler import get_anti_crawler
-from app.core.anti_crawler import get_anti_crawler
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,6 @@ class SteamAPI:
         self.base_url = "https://api.steampowered.com"
         self.market_url = "https://steamcommunity.com/market"
         self._session: Optional[aiohttp.ClientSession] = None
-        self._anti_crawler = get_anti_crawler()
         # 集成反爬虫管理器
         self._anti_crawler = get_anti_crawler()
     

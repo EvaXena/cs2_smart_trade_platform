@@ -241,11 +241,14 @@ class TradingEngine:
             )
         
         # 使用 TaskRegistry 注册任务
+        # 修改：TaskRegistry.register 需要传入函数和参数，而不是已执行的结果
         task_id = await self._task_registry.register(
             task_name,
-            do_arbitrage(),
-            on_failure=lambda e: logger.error(f"搬砖任务失败: {e}")
+            do_arbitrage
         )
+        
+        # 异步执行任务
+        await self._task_registry.run(task_id, wait=False)
         
         return ServiceResponse.ok(
             data={"task_id": task_id, "task_name": task_name},

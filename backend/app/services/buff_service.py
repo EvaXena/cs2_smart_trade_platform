@@ -15,7 +15,6 @@ import aiohttp
 from app.core.config import settings
 from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen
 from app.core.anti_crawler import get_anti_crawler
-from app.core.anti_crawler import get_anti_crawler
 
 
 class BuffAPIError(Exception):
@@ -91,6 +90,8 @@ class BuffAPI:
         self.min_interval = settings.BUFF_API_INTERVAL
         # 问题8：重试状态追踪
         self._retry_states: Dict[str, RetryState] = {}
+        # 集成反爬虫管理器
+        self._anti_crawler = get_anti_crawler()
     
     def _get_retry_state(self, endpoint: str) -> RetryState:
         """获取或创建重试状态"""
@@ -138,6 +139,9 @@ class BuffAPI:
         
         while retry_count < max_retries:
             try:
+                # 使用反爬虫管理器
+                await self._anti_crawler.wait_if_needed(url)
+                
                 # 频率控制
                 elapsed = time.time() - self.last_request_time
                 if elapsed < self.min_interval:
@@ -149,14 +153,28 @@ class BuffAPI:
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                     "Referer": self.base_url,
                 })
+                # 合并反爬虫headers
+                headers.update(self._anti_crawler.get_headers())
                 if self.cookie:
                     headers["Cookie"] = self.cookie
                 
                 kwargs["headers"] = headers
                 
+                start_time = time.time()
+                
                 # 发送请求
                 async with self.session.request(method, url, **kwargs) as response:
                     self.last_request_time = time.time()
+                    response_time = time.time() - start_time
+                    status_code = response.status
+                    
+                    # 请求后处理（统计、更新模式识别等）
+                    await self._anti_crawler.after_request(
+                        endpoint,
+                        success=response.status == 200,
+                        response_time=response_time,
+                        status_code=status_code
+                    )
                     
                     if response.status == 429:
                         # 请求过于频繁，使用指数退避+抖动后重试
