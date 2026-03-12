@@ -69,7 +69,7 @@ class RateLimiter:
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
         
-        return client_ip
+        # 获取X-Real-IP
         real_ip = request.headers.get("X-Real-IP")
         if real_ip:
             return real_ip
