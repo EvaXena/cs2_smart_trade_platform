@@ -705,8 +705,18 @@ class CacheManager:
         
         try:
             from app.core.database import engine
-            from sqlalchemy import select
+            from sqlalchemy import select, text
             from app.models.item import Item
+            
+            # 先检查 items 表是否存在
+            async with engine.connect() as conn:
+                try:
+                    # 尝试执行一个简单查询来验证表是否存在
+                    await conn.execute(text("SELECT 1 FROM items LIMIT 1"))
+                except Exception:
+                    # 表不存在，跳过预热
+                    logger.info("Items table not found, skipping cache warmup")
+                    return
             
             async with engine.connect() as conn:
                 # 预热热门物品缓存（按交易量排序的前20个）
@@ -752,40 +762,6 @@ class CacheManager:
         except Exception as e:
             logger.warning(f"Cache warmup failed: {e}")
         
-        # 缓存预热（可选）
-        await self.warmup_cache()
-    
-    async def warmup_cache(self) -> None:
-        """
-        缓存预热 - 启动时加载热门数据
-        
-        此方法在系统启动时自动调用，加载高频访问的数据到缓存，
-        避免冷启动时大量请求直接打到数据库。
-        
-        可扩展：从此方法可以调用外部服务获取热门物品、价格数据等
-        """
-        logger.info("Starting cache warm-up...")
-        try:
-            # 示例：预热热门物品缓存（实际数据源可根据业务需求配置）
-            # 这里预留扩展点，实际实现可以调用 items_service 获取热门物品
-            warmup_keys = [
-                ("popular_items", 600),  # 热门物品，10分钟
-                ("market_trends", 300),   # 市场趋势，5分钟
-                ("price_history", 300),   # 价格历史，5分钟
-            ]
-            
-            # 如果有外部数据源，可以在这里加载
-            # 示例：
-            # popular_items = await self._fetch_popular_items()
-            # for item in popular_items:
-            #     await self.aset(f"item:{item['id']}", item, 600)
-            
-            logger.info(f"Cache warm-up completed, prepared {len(warmup_keys)} cache keys")
-            
-        except Exception as e:
-            logger.warning(f"Cache warm-up failed: {e}")
-            # 预热失败不影响系统启动
-    
     async def _start_cleanup_task(self) -> None:
         """启动后台清理任务（带重试机制）"""
         if self._current_backend == CacheBackend.MEMORY:
