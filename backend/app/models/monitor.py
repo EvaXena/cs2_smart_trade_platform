@@ -53,6 +53,9 @@ class MonitorTask(Base):
     # 所有者
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
+    # 关联的机器人 (可选)
+    bot_id = Column(Integer, ForeignKey("bots.id"), nullable=True, index=True)
+    
     # 统计
     trigger_count = Column(Integer, default=0)
     last_triggered = Column(DateTime, nullable=True)
@@ -63,6 +66,7 @@ class MonitorTask(Base):
 
     # 关联
     user = relationship("User", back_populates="monitors")
+    bot = relationship("Bot", back_populates="monitor_tasks")
 
     # 索引
     __table_args__ = (
