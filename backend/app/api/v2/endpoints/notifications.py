@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -53,8 +53,7 @@ class NotificationResponse(BaseModel):
     created_at: datetime
     read_at: Optional[datetime]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NotificationListResponse(BaseModel):

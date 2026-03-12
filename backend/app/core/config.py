@@ -6,7 +6,7 @@ import os
 from functools import lru_cache
 from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, ConfigDict
 
 
 class Settings(BaseSettings):
@@ -75,10 +75,7 @@ class Settings(BaseSettings):
         "/api/v1/bots": {"requests": 100, "window": 60, "burst": 15}
     }"""
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "allow"  # 允许额外字段
+    model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="allow")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
