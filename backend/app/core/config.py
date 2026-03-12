@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     PRICE_UPDATE_INTERVAL_MEDIUM: int = 30  # 一般饰品 30秒
     PRICE_UPDATE_INTERVAL_LOW: int = 300    # 冷门饰品 5分钟
 
+    # 订单确认配置
+    ORDER_CONFIRM_CHECK_INTERVAL: int = 5   # 订单确认检查间隔（秒）
+    ORDER_CONFIRM_TIMEOUT: int = 300        # 订单确认超时（秒）
+    ORDER_POLL_RETRIES: int = 60            # 订单轮询最大次数
+
     # 登录限制配置
     LOGIN_MAX_ATTEMPTS: int = 5  # 最大登录尝试次数
     LOGIN_LOCKOUT_MINUTES: int = 15  # 锁定时间（分钟）

@@ -794,6 +794,42 @@ class CacheManager:
 
 # 全局缓存实例
 _cache: Optional[CacheManager] = None
+_cache_initialized: bool = False
+
+
+def is_cache_initialized() -> bool:
+    """检查缓存是否已初始化"""
+    global _cache_initialized
+    return _cache_initialized
+
+
+async def init_cache() -> CacheManager:
+    """初始化缓存实例"""
+    global _cache, _cache_initialized
+    if _cache is None:
+        from app.core.config import settings
+        
+        backend = CacheBackend.MEMORY
+        if settings.REDIS_URL:
+            backend = CacheBackend.REDIS
+        
+        _cache = CacheManager(
+            backend=backend,
+            redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
+        )
+        await _cache.initialize()
+        _cache_initialized = True
+        logger.info("Cache initialized via init_cache()")
+    
+    return _cache
+
+
+async def ensure_cache_initialized() -> CacheManager:
+    """确保缓存已初始化，如未初始化则初始化"""
+    global _cache_initialized
+    if not _cache_initialized:
+        return await init_cache()
+    return get_cache()
 
 
 def get_cache() -> CacheManager:

@@ -214,7 +214,8 @@ class BuffAPI:
         try:
             data = await self._request("GET", url, params=params)
             return data
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get price overview for {market_hash_name}: {e}")
             return None
     
     async def create_order(
@@ -274,7 +275,8 @@ class BuffAPI:
         try:
             data = await self._request("GET", url)
             return float(data.get("data", {}).get("balance", 0))
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get balance: {e}")
             return None
     
     async def add_to_cart(self, goods_id: int, price: float) -> Dict[str, Any]:
