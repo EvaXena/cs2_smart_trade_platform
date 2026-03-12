@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # 交易配置
     MIN_PROFIT: float = 1.0  # 最小利润（元）
     MAX_SINGLE_TRADE: float = 10000  # 单笔最大交易金额
+    MAX_SINGLE_ORDER: float = 10000  # 单笔订单最大金额
+    MAX_DAILY_LIMIT: float = 50000  # 每日累计最大交易金额
+    STEAM_FEE_RATE: float = 0.85  # Steam出售手续费率（15%手续费）
     AUTO_CONFIRM: bool = True
 
     # 监控配置

@@ -10,6 +10,7 @@ from sqlalchemy import select, or_, and_, func
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.exceptions import NotFoundError
+from app.core.config import settings
 from app.models.user import User
 from app.models.item import Item, PriceHistory
 from app.schemas.item import (
@@ -219,8 +220,8 @@ async def get_price_overview(
     arbitrage_percent = None
     
     if item.current_price and item.steam_lowest_price:
-        # Steam 出售需要扣除 15% 手续费
-        steam_sell_price = item.steam_lowest_price * 0.85
+        # Steam 出售需要扣除手续费
+        steam_sell_price = item.steam_lowest_price * settings.STEAM_FEE_RATE
         arbitrage_profit = steam_sell_price - item.current_price
         if item.current_price > 0:
             arbitrage_percent = (arbitrage_profit / item.current_price) * 100

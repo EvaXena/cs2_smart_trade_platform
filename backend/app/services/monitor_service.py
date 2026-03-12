@@ -250,7 +250,7 @@ class PriceMonitor:
                 
                 for item in items:
                     # 计算搬砖利润
-                    steam_sell = item.steam_lowest_price * 0.85
+                    steam_sell = item.steam_lowest_price * settings.STEAM_FEE_RATE
                     profit = steam_sell - item.current_price
                     
                     if profit >= settings.MIN_PROFIT:
@@ -303,7 +303,7 @@ class PriceMonitor:
             
             elif task.condition_type == "arbitrage":
                 if item.current_price > 0 and item.steam_lowest_price > 0:
-                    profit = item.steam_lowest_price * 0.85 - item.current_price
+                    profit = item.steam_lowest_price * settings.STEAM_FEE_RATE - item.current_price
                     if profit >= float(task.threshold):
                         triggered = True
                         message = f"{item.name} 发现搬砖机会，利润: {profit}"

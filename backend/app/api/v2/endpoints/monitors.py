@@ -12,6 +12,7 @@ from datetime import datetime
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.config import settings
 from app.models.user import User
 from app.models.monitor import MonitorTask, MonitorLog
 from app.schemas.monitor import (
@@ -330,7 +331,7 @@ async def trigger_monitor(
                 elif monitor.condition_type == 'arbitrage':
                     # 套利机会检查
                     if item.current_price and item.steam_lowest_price:
-                        profit = item.steam_lowest_price * 0.85 - item.current_price
+                        profit = item.steam_lowest_price * settings.STEAM_FEE_RATE - item.current_price
                         if profit >= float(monitor.threshold or 0):
                             triggered = True
                             trigger_message = f"{item.name} 发现套利机会，利润: {profit:.2f}元"

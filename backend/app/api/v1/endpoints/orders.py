@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.exceptions import NotFoundError, BusinessError
+from app.core.config import settings
 from app.core.idempotency import (
     generate_idempotency_key,
     check_idempotency,
@@ -128,10 +129,9 @@ async def create_order(
             )
         
         # 检查单笔订单限额
-        MAX_SINGLE_ORDER = 10000.0  # 单笔订单最大金额
-        if order_total > MAX_SINGLE_ORDER:
+        if order_total > settings.MAX_SINGLE_ORDER:
             raise BusinessError(
-                f"单笔订单金额超限: 最大 {MAX_SINGLE_ORDER:.2f}，订单金额 {order_total:.2f}"
+                f"单笔订单金额超限: 最大 {settings.MAX_SINGLE_ORDER:.2f}，订单金额 {order_total:.2f}"
             )
         
         # 检查日累计限额
@@ -152,10 +152,9 @@ async def create_order(
         if isinstance(daily_total, str):
             daily_total = float(daily_total)
         
-        MAX_DAILY_LIMIT = 50000.0  # 每日累计最大交易金额
-        if daily_total + order_total > MAX_DAILY_LIMIT:
+        if daily_total + order_total > settings.MAX_DAILY_LIMIT:
             raise BusinessError(
-                f"今日交易限额已用完: 今日已交易 {daily_total:.2f}，限额 {MAX_DAILY_LIMIT:.2f}"
+                f"今日交易限额已用完: 今日已交易 {daily_total:.2f}，限额 {settings.MAX_DAILY_LIMIT:.2f}"
             )
     
     # 生成订单号

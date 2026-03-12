@@ -235,15 +235,29 @@ class BuffAPI:
         }
         
         url = f"{self.base_url}/api/market/order/create"
-        result = await self._request("POST", url, json=data)
-        return result
+        logger.info(f"尝试创建订单: goods_id={goods_id}, price={price}, num={num}")
+        
+        try:
+            result = await self._request("POST", url, json=data)
+            logger.info(f"订单创建成功: goods_id={goods_id}, result={result}")
+            return result
+        except Exception as e:
+            logger.error(f"订单创建失败: goods_id={goods_id}, error={e}")
+            raise
     
     async def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """取消订单"""
         data = {"id": order_id}
         url = f"{self.base_url}/api/market/order/cancel"
-        result = await self._request("POST", url, json=data)
-        return result
+        logger.info(f"尝试取消订单: order_id={order_id}")
+        
+        try:
+            result = await self._request("POST", url, json=data)
+            logger.info(f"订单取消成功: order_id={order_id}")
+            return result
+        except Exception as e:
+            logger.error(f"订单取消失败: order_id={order_id}, error={e}")
+            raise
     
     async def get_my_orders(
         self,
@@ -271,12 +285,15 @@ class BuffAPI:
             return None
         
         url = f"{self.base_url}/api/user/balance"
+        logger.info("获取BUFF账户余额")
         
         try:
             data = await self._request("GET", url)
-            return float(data.get("data", {}).get("balance", 0))
+            balance = float(data.get("data", {}).get("balance", 0))
+            logger.info(f"获取余额成功: {balance}")
+            return balance
         except Exception as e:
-            logger.error(f"Failed to get balance: {e}")
+            logger.error(f"获取余额失败: {e}")
             return None
     
     async def add_to_cart(self, goods_id: int, price: float) -> Dict[str, Any]:

@@ -67,8 +67,8 @@ class TradingEngine:
         opportunities = []
         
         for item in items:
-            # 计算搬砖利润 (Steam 出售需扣除 15% 手续费)
-            steam_sell_price = item.steam_lowest_price * 0.85
+            # 计算搬砖利润 (Steam 出售需扣除手续费)
+            steam_sell_price = item.steam_lowest_price * settings.STEAM_FEE_RATE
             profit = steam_sell_price - item.current_price
             profit_percent = (profit / item.current_price * 100) if item.current_price > 0 else 0
             
@@ -176,6 +176,12 @@ class TradingEngine:
             )
             self.db.add(order)
             await self.db.commit()
+            
+            # 提升成功日志级别为 info
+            logger.info(
+                f"买入订单创建成功: order_id={order.order_id}, "
+                f"item={item.name}, price={price}, quantity={quantity}, user_id={user_id}"
+            )
             
             return ServiceResponse.ok(
                 data={
