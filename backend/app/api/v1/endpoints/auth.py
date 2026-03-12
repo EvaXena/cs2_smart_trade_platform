@@ -225,8 +225,48 @@ async def register(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
-):
-    """用户注册（支持幂等性）"""
+) -> UserResponse:
+    """
+    用户注册
+    
+    创建新用户账号，支持幂等性请求。
+    
+    ## 参数说明
+    
+    请求体 (UserCreate):
+    | 字段 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | str | 是 | 用户名，3-50字符，只允许字母、数字、下划线 |
+    | email | str | 否 | 邮箱地址 |
+    | password | str | 是 | 密码，至少8字符，需包含字母和数字 |
+    
+    ## 返回格式
+    
+    ```json
+    {
+        "id": 1,
+        "username": "user123",
+        "email": "user@example.com",
+        "created_at": "2024-01-01T00:00:00"
+    }
+    ```
+    
+    ## 错误码
+    
+    - 400: 用户名已存在 / 邮箱已被使用 / 密码强度不足
+    
+    ## 幂等性
+    
+    支持通过 `Idempotency-Key` header 实现幂等性请求，避免重复创建用户。
+    
+    ## 示例
+    
+    ```bash
+    curl -X POST "http://localhost:8000/api/v1/auth/register" \
+      -H "Content-Type: application/json" \
+      -d '{"username": "user123", "email": "user@example.com", "password": "Password123"}'
+    ```
+    """
     
     # 幂等性检查（仅对请求体生成key，不依赖用户ID因为用户还未创建）
     if idempotency_key:
@@ -295,8 +335,48 @@ async def register(
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
-):
-    """用户登录"""
+) -> Token:
+    """
+    用户登录
+    
+    使用用户名和密码登录，返回访问令牌。支持登录失败限制防止暴力破解。
+    
+    ## 参数说明
+    
+    使用 OAuth2PasswordRequestForm（application/x-www-form-urlencoded）:
+    | 字段 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | str | 是 | 用户名 |
+    | password | str | 是 | 密码 |
+    
+    ## 返回格式
+    
+    ```json
+    {
+        "access_token": "eyJhbGciOiJIUzI1NiIs...",
+        "token_type": "bearer"
+    }
+    ```
+    
+    ## 安全特性
+    
+    - 登录失败5次后锁定账号15分钟
+    - 密码错误不返回具体错误信息防止用户名枚举
+    - Token 有效期15分钟
+    
+    ## 错误码
+    
+    - 401: 用户名或密码错误
+    - 423: 账号被锁定
+    
+    ## 示例
+    
+    ```bash
+    curl -X POST "http://localhost:8000/api/v1/auth/login" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "username=user123&password=Password123"
+    ```
+    """
     username = form_data.username
     
     # 检查登录尝试限制

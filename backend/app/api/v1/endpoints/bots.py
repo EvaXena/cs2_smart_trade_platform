@@ -40,13 +40,54 @@ router = APIRouter()
 
 @router.get("/", response_model=List[BotResponse])
 async def get_bots(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
-    status: Optional[str] = None,
+    skip: int = Query(0, ge=0, description="跳过的记录数"),
+    limit: int = Query(100, ge=1, le=100, description="返回记录数，最大100"),
+    status: Optional[str] = Query(None, description="机器人状态筛选: online, offline, trading"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
-):
-    """获取机器人列表"""
+) -> List[BotResponse]:
+    """
+    获取当前用户的机器人列表
+    
+    返回当前用户拥有的所有交易机器人的列表，支持分页和状态筛选。
+    
+    ## 参数说明
+    
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | skip | int | 否 | 跳过记录数，默认0 |
+    | limit | int | 否 | 返回记录数，最大100，默认100 |
+    | status | str | 否 | 状态筛选: online, offline, trading |
+    
+    ## 返回格式
+    
+    ```json
+    [
+        {
+            "id": 1,
+            "name": "My Bot 1",
+            "steam_id": "76561198000000000",
+            "status": "online",
+            "owner_id": 1,
+            "created_at": "2024-01-01T00:00:00"
+        }
+    ]
+    ```
+    
+    ## 需要认证
+    
+    此接口需要 Bearer Token 认证。
+    
+    ## 错误码
+    
+    - 401: 未认证
+    
+    ## 示例
+    
+    ```bash
+    curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/v1/bots?status=online"
+    ```
+    """
     # 预加载关联数据避免 N+1 查询
     query = select(Bot).where(Bot.owner_id == current_user.id).options(
         selectinload(Bot.trades)
