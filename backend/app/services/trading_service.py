@@ -4,7 +4,7 @@
 """
 import asyncio
 import logging
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -392,7 +392,7 @@ class TradingEngine:
         order_id: str,
         max_wait_time: int = None,
         check_interval: int = 5
-    ) -> tuple[bool, Optional[Order]]:
+    ) -> Tuple[bool, Optional[Order]]:
         """
         等待订单到账（轮询方式）- 问题3：搬砖等待使用硬睡眠
         

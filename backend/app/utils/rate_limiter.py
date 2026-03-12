@@ -6,7 +6,7 @@ API限流中间件
 from fastapi import Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import time
 import logging
 from collections import defaultdict
@@ -84,7 +84,7 @@ class RateLimiter:
         self,
         request: Request,
         user_id: Optional[int] = None
-    ) -> tuple[bool, Dict]:
+    ) -> Tuple[bool, Dict]:
         """
         检查限流
         返回: (是否允许, 限流信息)

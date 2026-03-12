@@ -398,18 +398,23 @@ class ArbitrageBot(TradingBotBase):
     async def _sell_to_steam(
         self,
         item_id: int,
-        price: float
+        price: float = None,
+        item_name: str = None,
+        buy_price: float = None
     ) -> Dict[str, Any]:
         """
         卖出到 Steam - 问题6：实现完整的上架流程
         
         流程：
         1. 获取Steam库存中的物品
-        2. 创建市场上架列表
+        2. 计算智能卖出价格
+        3. 创建市场上架列表
         
         Args:
             item_id: 物品ID
-            price: 价格
+            price: 指定价格（可选，如果不指定则使用智能定价）
+            item_name: 物品名称（用于智能定价）
+            buy_price: 买入价格（用于计算目标利润）
             
         Returns:
             卖出结果
@@ -430,7 +435,25 @@ class ArbitrageBot(TradingBotBase):
                     "retry": True  # 标记需要重试
                 }
             
-            # 2. 创建上架列表
+            # 2. 如果未指定价格，使用智能定价
+            if price is None:
+                smart_pricing = await self._calculate_smart_sell_price(
+                    item_id=item_id,
+                    item_name=item_name,
+                    buy_price=buy_price
+                )
+                if smart_pricing.get("success"):
+                    price = smart_pricing["recommended_price"]
+                    self.logger.info(f"智能定价: item={item_name}, 推荐价格={price}¥")
+                else:
+                    # 智能定价失败，使用默认定价
+                    self.logger.warning(f"智能定价失败，使用默认价格: {smart_pricing.get('message')}")
+                    price = smart_pricing.get("fallback_price", 0)
+            
+            if price <= 0:
+                return {"success": False, "message": "无效的卖出价格"}
+            
+            # 3. 创建上架列表
             for item in inventory:
                 listing_result = await self._create_steam_listing(
                     asset_id=item["asset_id"],

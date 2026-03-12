@@ -118,7 +118,7 @@ class RateLimiter:
         self,
         key: str,
         user_id: Optional[int] = None
-    ) -> tuple[bool, Optional[float]]:
+    ) -> Tuple[bool, Optional[float]]:
         """
         检查是否触发限流
         
