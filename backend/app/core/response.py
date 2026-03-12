@@ -49,6 +49,32 @@ class ServiceResponse(Generic[T]):
         """是否失败"""
         return self.status == ResponseStatus.ERROR
     
+    def __getitem__(self, key: str):
+        """支持字典式访问"""
+        if key == "success":
+            return self.success
+        elif key == "error":
+            return self.error
+        elif key == "status":
+            return self.status.value
+        elif key == "message":
+            return self.message
+        elif key == "code":
+            return self.code
+        elif key == "data":
+            return self.data
+        elif key == "metadata":
+            return self.metadata
+        raise KeyError(f"'{key}'")
+    
+    def __contains__(self, key: str) -> bool:
+        """支持in操作符"""
+        return key in ["success", "error", "status", "message", "code", "data", "metadata"]
+    
+    def keys(self):
+        """返回所有可用的键"""
+        return ["success", "error", "status", "message", "code", "data", "metadata"]
+    
     @classmethod
     def ok(cls, data: Any = None, message: str = "Success") -> "ServiceResponse":
         """创建成功响应"""

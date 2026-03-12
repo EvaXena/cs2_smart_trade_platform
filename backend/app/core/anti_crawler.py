@@ -182,13 +182,35 @@ class AntiCrawlerManager:
         await self._check_pattern()
     
     async def _handle_ratelimit(self, endpoint: str):
-        """处理限流响应"""
+        """处理限流响应 - 使用指数退避"""
         logger.warning(f"检测到限流: {endpoint}")
-        # 增加延迟
-        self.config.min_request_interval = min(
-            self.config.min_request_interval * 1.5,
-            5.0  # 最大5秒
-        )
+        
+        # 获取当前连续429错误次数
+        retry_count = getattr(self, '_429_retry_counts', {})
+        count = retry_count.get(endpoint, 0) + 1
+        retry_count[endpoint] = count
+        self._429_retry_counts = retry_count
+        
+        # 指数退避：基础延迟 * 2^count，最大60秒
+        base_delay = 1.0  # 1秒基础延迟
+        max_delay = 60.0  # 最大60秒
+        delay = min(base_delay * (2 ** count), max_delay)
+        
+        # 添加随机抖动
+        import random
+        delay += random.uniform(0, delay * 0.1)
+        
+        logger.info(f"429限流退避: {endpoint}, count={count}, delay={delay:.2f}秒")
+        
+        # 更新请求间隔
+        self.config.min_request_interval = delay
+        
+        # 如果连续429次数过多，封禁端点
+        if count >= 5:
+            await self._handle_blocked(endpoint)
+            # 重置计数
+            retry_count[endpoint] = 0
+            self._429_retry_counts = retry_count
     
     async def _handle_blocked(self, endpoint: str):
         """处理被封禁"""

@@ -172,6 +172,46 @@ class TaskRegistry:
             
             return task
     
+    async def register(
+        self,
+        task_name: str,
+        coro
+    ) -> str:
+        """
+        注册任务协程
+        
+        Args:
+            task_name: 任务名称
+            coro: 协程函数
+            
+        Returns:
+            任务ID
+        """
+        # 创建简单的任务来保存协程
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        
+        async with self._lock:
+            task = ArbitrageTask(
+                task_id=task_id,
+                task_type="custom",
+                item_id=0,
+                item_name=task_name,
+                quantity=1,
+                buy_price=0,
+                buy_platform="",
+                sell_platform="",
+                status=TaskStatus.PENDING.value
+            )
+            # 保存协程以便后续执行
+            task._coro = coro
+            
+            self._tasks[task_id] = task
+            self._stats["total_created"] += 1
+            
+            logger.info(f"任务已注册: {task_id}, name={task_name}")
+            
+            return task_id
+    
     async def update_status(
         self,
         task_id: str,
@@ -351,10 +391,98 @@ class TaskRegistry:
             ]
             tasks.sort(key=lambda t: t.updated_at, reverse=True)
             return tasks[:limit]
+    
+    async def run(
+        self,
+        task_id: str,
+        wait: bool = True,
+        timeout: float = None
+    ) -> Optional[Any]:
+        """
+        运行任务
+        
+        Args:
+            task_id: 任务ID
+            wait: 是否等待任务完成
+            timeout: 超时时间（秒）
+            
+        Returns:
+            任务结果（如果wait=True）
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            logger.warning(f"任务不存在: {task_id}")
+            return None
+        
+        # 获取任务的协程函数并执行
+        # 注意：实际执行需要在register时保存协程
+        # 这里需要task对象包含可执行的协程
+        if not hasattr(task, '_coro'):
+            logger.warning(f"任务没有协程: {task_id}")
+            return None
+        
+        async def execute_task():
+            try:
+                await self.update_status(task_id, TaskStatus.BUYING, "任务执行中")
+                result = await task._coro
+                await self.update_status(task_id, TaskStatus.COMPLETED, "任务完成", {"result": result})
+                return result
+            except Exception as e:
+                logger.error(f"任务执行失败: {task_id}, error={e}")
+                await self.update_status(task_id, TaskStatus.FAILED, str(e))
+                raise
+        
+        async_task = asyncio.create_task(execute_task())
+        
+        if wait:
+            try:
+                if timeout:
+                    return await asyncio.wait_for(async_task, timeout=timeout)
+                return await async_task
+            except asyncio.TimeoutError:
+                logger.warning(f"任务执行超时: {task_id}")
+                return None
+        else:
+            # 不等待，返回任务ID
+            return task_id
 
 
 # 全局实例
 _task_registry: Optional[TaskRegistry] = None
+
+
+class TaskRunner:
+    """任务运行器"""
+    
+    def __init__(self, registry: TaskRegistry):
+        self.registry = registry
+        self._running_tasks: Dict[str, asyncio.Task] = {}
+    
+    async def run_task(self, task_id: str, coro):
+        """运行任务"""
+        task = asyncio.create_task(coro)
+        self._running_tasks[task_id] = task
+        return task
+    
+    async def wait_task(self, task_id: str, timeout: float = None):
+        """等待任务完成"""
+        task = self._running_tasks.get(task_id)
+        if not task:
+            return None
+        try:
+            if timeout:
+                return await asyncio.wait_for(task, timeout=timeout)
+            return await task
+        except asyncio.TimeoutError:
+            return None
+    
+    def cancel_task(self, task_id: str):
+        """取消任务"""
+        task = self._running_tasks.get(task_id)
+        if task:
+            task.cancel()
+            return True
+        return False
 
 
 def get_task_registry() -> TaskRegistry:

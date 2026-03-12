@@ -284,7 +284,7 @@ class TradingEngine:
         # 修改：TaskRegistry.register 需要传入函数和参数，而不是已执行的结果
         task_id = await self._task_registry.register(
             task_name,
-            do_arbitrage
+            do_arbitrage  # 传入协程函数
         )
         
         # 异步执行任务
