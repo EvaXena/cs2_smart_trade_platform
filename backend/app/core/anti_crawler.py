@@ -205,7 +205,7 @@ class AntiCrawlerManager:
         recent = list(self._request_history)[-30:]
         
         # 计算失败率
-        failed = sum(1 for r in not r.success for r in recent)
+        failed = sum(1 for r in recent if not r.success)
         fail_rate = failed / len(recent)
         
         # 如果失败率过高，认为是异常模式

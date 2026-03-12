@@ -126,6 +126,9 @@ class SteamAPI:
         **kwargs
     ) -> Dict[str, Any]:
         """发送请求"""
+        # 从URL提取endpoint用于反爬虫统计
+        endpoint = url.split("/")[-1] if url else "unknown"
+        
         # 使用反爬虫管理器
         await self._anti_crawler.wait_if_needed(url)
         
