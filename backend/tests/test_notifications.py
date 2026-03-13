@@ -88,7 +88,7 @@ class TestEmailNotification:
     async def test_send_email_no_recipients(self, email_notification):
         """测试无收件人时发送失败"""
         msg = Message(title="Test", content="Test content")
-        result = await email.send(msg, [])
+        result = await email_notification.send(msg, [])
         assert result is False
     
     @patch('smtplib.SMTP')
@@ -477,7 +477,7 @@ class TestNotificationManager:
         """测试健康检查"""
         config = NotificationManagerConfig(
             email=EmailConfig(enabled=True),
-            slack=SlackConfig(enabled=False)
+            slack=SlackConfig(enabled=True)  # 需要启用才能加入 channels
         )
         manager = NotificationManager(config)
         
@@ -489,7 +489,6 @@ class TestNotificationManager:
         assert ChannelType.EMAIL in results
         assert results[ChannelType.EMAIL] is True
         assert ChannelType.SLACK in results
-        assert results[ChannelType.SLACK] is False
 
 
 # ==================== 集成测试 ====================

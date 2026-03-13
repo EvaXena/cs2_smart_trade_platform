@@ -6,6 +6,7 @@ import time
 import json
 import logging
 import random
+import sys
 from typing import Any, Dict, Optional, Callable, List
 from threading import Lock
 from collections import OrderedDict
@@ -129,13 +130,19 @@ class MemoryCache:
     - 自动清理过期条目
     - 支持 LRU 淘汰策略
     - 支持多节点集群（分布式通知）
+    - 支持内存限制（使用cachetools风格）
     """
     
-    def __init__(self, node_id: str = None, max_size: int = 1000):
+    # 默认最大内存使用（100MB）
+    DEFAULT_MAX_MEMORY_BYTES = 100 * 1024 * 1024
+    
+    def __init__(self, node_id: str = None, max_size: int = 1000, max_memory_bytes: int = None):
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._lock = Lock()
         self._async_lock = asyncio.Lock()  # 异步锁，用于异步操作
         self._max_size = max_size  # 最大缓存条目数
+        self._max_memory_bytes = max_memory_bytes or self.DEFAULT_MAX_MEMORY_BYTES  # 最大内存使用
+        self._current_memory_bytes = 0  # 当前内存使用
         # 统计信息
         self._hits = 0
         self._misses = 0
@@ -213,11 +220,42 @@ class MemoryCache:
             else:
                 self._cache[key] = CacheEntry(value, 300)  # 默认 TTL
     
+    def _estimate_value_size(self, value: Any) -> int:
+        """
+        估算值的大小（字节）
+        
+        使用 sys.getsizeof 估算，对字符串和字典进行更精确的计算
+        """
+        try:
+            # 对于字符串，计算实际字节数
+            if isinstance(value, str):
+                return len(value.encode('utf-8'))
+            # 对于字典/列表，序列化为JSON后计算大小
+            elif isinstance(value, (dict, list)):
+                return len(json.dumps(value).encode('utf-8'))
+            # 其他类型使用 getsizeof
+            else:
+                return sys.getsizeof(value)
+        except Exception:
+            # 出错时返回保守估计
+            return 1024
+    
     def _evict_if_needed(self) -> None:
-        """当缓存满时淘汰最旧的条目（LRU）"""
+        """当缓存满时淘汰最旧的条目（LRU），同时检查内存限制"""
+        # 检查条目数限制
         while len(self._cache) >= self._max_size:
             # 弹出最旧的条目（OrderedDict 头部）
-            self._cache.popitem(last=False)
+            key, entry = self._cache.popitem(last=False)
+            self._current_memory_bytes -= self._estimate_value_size(entry.value)
+        
+        # 检查内存限制
+        while self._current_memory_bytes > self._max_memory_bytes and self._cache:
+            # 弹出最旧的条目
+            key, entry = self._cache.popitem(last=False)
+            self._current_memory_bytes -= self._estimate_value_size(entry.value)
+        
+        # 确保内存计数不会为负
+        self._current_memory_bytes = max(0, self._current_memory_bytes)
     
     def get(self, key: str, default: Any = None) -> Optional[Any]:
         """获取缓存值"""
@@ -242,12 +280,24 @@ class MemoryCache:
         with self._lock:
             # 如果key已存在，先删除（更新位置）
             if key in self._cache:
+                old_entry = self._cache[key]
+                self._current_memory_bytes -= self._estimate_value_size(old_entry.value)
                 del self._cache[key]
+            
+            # 估算新值的大小
+            value_size = self._estimate_value_size(value)
             
             # 检查是否需要淘汰
             self._evict_if_needed()
             
+            # 再次检查内存（如果单个值就超过限制，强制设置）
+            while value_size > self._max_memory_bytes and self._cache:
+                # 淘汰多个条目
+                _, old_entry = self._cache.popitem(last=False)
+                self._current_memory_bytes -= self._estimate_value_size(old_entry.value)
+            
             self._cache[key] = CacheEntry(value, ttl)
+            self._current_memory_bytes += value_size
             # 移动到末尾（最新）
             self._cache.move_to_end(key)
         
@@ -258,6 +308,8 @@ class MemoryCache:
         """删除缓存"""
         with self._lock:
             if key in self._cache:
+                entry = self._cache[key]
+                self._current_memory_bytes -= self._estimate_value_size(entry.value)
                 del self._cache[key]
                 # 在锁外通知订阅者
                 self._notify_subscribers("delete", key)
@@ -268,6 +320,7 @@ class MemoryCache:
         """清空所有缓存"""
         with self._lock:
             self._cache.clear()
+            self._current_memory_bytes = 0
             self._hits = 0
             self._misses = 0
         # 在锁外通知订阅者
@@ -296,6 +349,11 @@ class MemoryCache:
                 "total_requests": total,
                 "hit_rate": round(hit_rate, 2),
                 "total_keys": len(self._cache),
+                "memory_bytes": self._current_memory_bytes,
+                "memory_mb": round(self._current_memory_bytes / (1024 * 1024), 2),
+                "max_memory_bytes": self._max_memory_bytes,
+                "max_memory_mb": round(self._max_memory_bytes / (1024 * 1024), 2),
+                "memory_usage_percent": round(self._current_memory_bytes / self._max_memory_bytes * 100, 2) if self._max_memory_bytes > 0 else 0,
             }
     
     def keys(self) -> list:
@@ -657,6 +715,10 @@ class CacheManager:
         # 自动清理定时器（仅内存缓存）
         self._cleanup_task = None
         
+        # Redis 重连定时器
+        self._redis_reconnect_task = None
+        self._redis_reconnect_interval = 60  # 60秒
+        
         # 缓存击穿保护 - 异步锁字典（每个key一个锁）
         self._cache_locks: Dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
@@ -762,8 +824,87 @@ class CacheManager:
         # 启动自动清理任务（仅内存缓存）
         await self._start_cleanup_task()
         
+        # 启动 Redis 重连任务
+        await self._start_redis_reconnect_task()
+        
         # 预热缓存
         await self.warmup_cache()
+    
+    async def _start_redis_reconnect_task(self) -> None:
+        """启动 Redis 定时重连任务"""
+        if self._backend != CacheBackend.REDIS:
+            return
+        
+        async def reconnect_loop():
+            while True:
+                await asyncio.sleep(self._redis_reconnect_interval)
+                
+                # 检查 Redis 连接状态
+                if self._current_backend == CacheBackend.MEMORY:
+                    # 如果当前使用的是内存缓存，尝试重连
+                    try:
+                        logger.info("Attempting to reconnect to Redis...")
+                        self._redis_cache = RedisCache(self._redis_url)
+                        connected = await self._redis_cache.connect()
+                        
+                        if connected:
+                            self._current_backend = CacheBackend.REDIS
+                            logger.info("Redis reconnected successfully, switched back to Redis backend")
+                            # 重置缓存统计
+                            self._memory_cache.clear()
+                        else:
+                            logger.warning("Redis reconnection failed, will retry next interval")
+                    except Exception as e:
+                        logger.error(f"Redis reconnection error: {e}")
+                else:
+                    # 如果当前使用的是 Redis，检查连接是否正常
+                    if self._redis_cache and not await self._check_redis_health():
+                        logger.warning("Redis connection lost, falling back to memory cache")
+                        self._current_backend = CacheBackend.MEMORY
+                        if self._redis_cache:
+                            await self._redis_cache.disconnect()
+        
+        # 创建后台任务
+        asyncio.create_task(reconnect_loop())
+        logger.info(f"Redis reconnect task started (interval: {self._redis_reconnect_interval}s)")
+    
+    async def _check_redis_health(self) -> bool:
+        """检查 Redis 连接健康状态"""
+        try:
+            if self._redis_cache:
+                return await self._redis_cache.connect()
+        except Exception:
+            pass
+        return False
+    
+    async def reconnect_redis(self) -> bool:
+        """
+        手动触发 Redis 重连
+        
+        Returns:
+            是否重连成功
+        """
+        if self._backend != CacheBackend.REDIS:
+            logger.info("Backend is not Redis, skipping reconnection")
+            return False
+        
+        try:
+            if self._redis_cache:
+                await self._redis_cache.disconnect()
+            
+            self._redis_cache = RedisCache(self._redis_url)
+            connected = await self._redis_cache.connect()
+            
+            if connected:
+                self._current_backend = CacheBackend.REDIS
+                logger.info("Manual Redis reconnection successful")
+                return True
+            else:
+                logger.warning("Manual Redis reconnection failed")
+                return False
+        except Exception as e:
+            logger.error(f"Manual Redis reconnection error: {e}")
+            return False
     
     def _get_ttl_with_jitter(self, ttl: int) -> int:
         """

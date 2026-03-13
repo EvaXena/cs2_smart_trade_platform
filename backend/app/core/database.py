@@ -6,7 +6,7 @@ import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from app.core.config import settings
 
@@ -22,12 +22,16 @@ if is_sqlite:
     else:
         db_url = settings.DATABASE_URL
     
+    # 使用 AsyncAdaptedQueuePool 替代 StaticPool，支持连接池
     engine = create_async_engine(
         db_url,
         echo=settings.DEBUG,
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        pool_pre_ping=True,
+        poolclass=AsyncAdaptedQueuePool,
+        pool_size=5,           # 池大小
+        max_overflow=10,       # 最大溢出连接数
+        pool_pre_ping=True,    # 连接前测试
+        pool_recycle=3600,     # 连接回收时间（秒）
     )
     
     # 配置 SQLite WAL 模式和 busy_timeout
@@ -87,6 +91,9 @@ async_session_factory = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+# 兼容别名（供其他模块使用）
+async_session_maker = async_session_factory
 
 # 创建基类
 Base = declarative_base()

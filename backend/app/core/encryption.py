@@ -40,12 +40,24 @@ class EncryptionManager:
         
         use_fallback = False
         
+        # 检查是否在生产环境
+        is_production = os.environ.get("DEBUG", "").lower() != "true"
+        
         if not key:
-            # 优雅降级：使用临时密钥
-            logger.warning("ENCRYPTION_KEY 环境变量未设置，使用临时密钥（开发模式）")
-            logger.warning("生产环境请设置: export ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')")
-            key = b"cs2_trade_temp_key_do_not_use_in_production_32bytes"
-            use_fallback = True
+            # 生产环境强制要求 ENCRYPTION_KEY
+            if is_production:
+                logger.error("生产环境必须设置 ENCRYPTION_KEY 环境变量！")
+                logger.error("请设置: export ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')")
+                raise ValueError(
+                    "生产环境未设置 ENCRYPTION_KEY 环境变量。"
+                    "为保护敏感数据安全，请设置 ENCRYPTION_KEY 后再启动服务。"
+                )
+            else:
+                # 开发环境允许临时密钥
+                logger.warning("ENCRYPTION_KEY 环境变量未设置，使用临时密钥（开发模式）")
+                logger.warning("生产环境请设置: export ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')")
+                key = b"cs2_trade_temp_key_do_not_use_in_production_32bytes"
+                use_fallback = True
         
         # 从环境变量获取 salt
         salt_env = os.environ.get("ENCRYPTION_SALT")

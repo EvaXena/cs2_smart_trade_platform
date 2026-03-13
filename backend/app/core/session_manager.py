@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any
 import redis.asyncio as redis
 
 from app.core.config import settings
+from app.core.redis_manager import redis_manager, _build_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +37,32 @@ class SessionManager:
         session_ttl: int = 86400,        # 默认 24 小时
         token_ttl: int = 2592000,        # 默认 30 天
         refresh_ttl: int = 3600,         # 续期窗口 1 小时
+        use_redis_manager: bool = True,  # 是否使用 RedisManager（统一连接）
     ):
-        self.redis_url = redis_url or settings.REDIS_URL
+        # 使用 RedisManager 的 URL 构建函数，支持密码
+        if use_redis_manager:
+            # 使用 RedisManager 的连接
+            self._use_external_redis = True
+            self.redis_url = None
+        else:
+            # 使用自定义 URL（支持密码）
+            self._use_external_redis = False
+            raw_url = redis_url or settings.REDIS_URL
+            # 支持 REDIS_PASSWORD 环境变量
+            self.redis_url = _build_redis_url(raw_url, settings.REDIS_PASSWORD)
+        
         self.session_ttl = session_ttl
         self.token_ttl = token_ttl
         self.refresh_ttl = refresh_ttl
         self._redis: Optional[redis.Redis] = None
     
     async def _get_redis(self) -> redis.Redis:
-        """获取 Redis 连接"""
+        """获取 Redis 连接（优先使用 RedisManager 统一连接）"""
+        if self._use_external_redis:
+            # 使用 RedisManager 的统一连接
+            return await redis_manager.get_client()
+        
+        # 使用自定义连接
         if self._redis is None:
             self._redis = redis.from_url(
                 self.redis_url,
@@ -55,6 +73,12 @@ class SessionManager:
     
     async def close(self):
         """关闭 Redis 连接"""
+        # 如果使用的是 RedisManager，不单独关闭（由 RedisManager 统一管理）
+        if self._use_external_redis:
+            self._redis = None
+            return
+        
+        # 关闭自定义连接
         if self._redis:
             await self._redis.close()
             self._redis = None

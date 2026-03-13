@@ -17,6 +17,7 @@ from app.core.idempotency import (
     check_idempotency,
     save_idempotent_response,
 )
+from app.core.permissions_registry import verify_resource_owner
 from app.models.user import User
 from app.models.inventory import Inventory, Listing
 from app.schemas.inventory import (
@@ -238,6 +239,7 @@ async def list_item(
 
 
 @router.post("/unlist", response_model=ListingResponse)
+@verify_resource_owner("listing", "listing_id")
 async def unlist_item(
     listing_id: int,
     current_user: User = Depends(get_current_user),
@@ -258,7 +260,7 @@ async def unlist_item(
             logger.info(f"检测到重复下架请求，key: {idempotency_key}")
             return ListingResponse(**cached_response)
     
-    # 验证上架记录存在且属于当前用户
+    # 验证上架记录存在
     result = await db.execute(
         select(Listing).where(
             Listing.id == listing_id,
@@ -273,17 +275,19 @@ async def unlist_item(
             detail="上架记录不存在或已下架"
         )
     
-    # 验证库存属于当前用户
+    # 获取关联的库存
     inv_result = await db.execute(
         select(Inventory).where(Inventory.id == listing.inventory_id)
     )
     inventory = inv_result.scalar_one_or_none()
     
-    if not inventory or inventory.user_id != current_user.id:
+    if not inventory:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="无权操作此物品"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="关联的库存不存在"
         )
+    
+    # 权限检查器已经验证了所有权，这里直接更新状态
     
     # 更新状态
     listing.status = 'cancelled'
@@ -304,6 +308,7 @@ async def unlist_item(
 
 
 @router.get("/{inventory_id}", response_model=InventoryResponse)
+@verify_resource_owner("inventory", "inventory_id")
 async def get_inventory_item(
     inventory_id: int,
     current_user: User = Depends(get_current_user),
@@ -311,10 +316,7 @@ async def get_inventory_item(
 ):
     """获取库存详情"""
     result = await db.execute(
-        select(Inventory).where(
-            Inventory.id == inventory_id,
-            Inventory.user_id == current_user.id
-        )
+        select(Inventory).where(Inventory.id == inventory_id)
     )
     item = result.scalar_one_or_none()
     
@@ -328,6 +330,7 @@ async def get_inventory_item(
 
 
 @router.put("/{inventory_id}", response_model=InventoryResponse)
+@verify_resource_owner("inventory", "inventory_id")
 async def update_inventory_item(
     inventory_id: int,
     inventory_data: InventoryUpdate,
@@ -336,10 +339,7 @@ async def update_inventory_item(
 ):
     """更新库存"""
     result = await db.execute(
-        select(Inventory).where(
-            Inventory.id == inventory_id,
-            Inventory.user_id == current_user.id
-        )
+        select(Inventory).where(Inventory.id == inventory_id)
     )
     item = result.scalar_one_or_none()
     
@@ -362,6 +362,7 @@ async def update_inventory_item(
 
 
 @router.delete("/{inventory_id}", status_code=status.HTTP_204_NO_CONTENT)
+@verify_resource_owner("inventory", "inventory_id")
 async def delete_inventory_item(
     inventory_id: int,
     current_user: User = Depends(get_current_user),
@@ -369,10 +370,7 @@ async def delete_inventory_item(
 ):
     """删除库存记录"""
     result = await db.execute(
-        select(Inventory).where(
-            Inventory.id == inventory_id,
-            Inventory.user_id == current_user.id
-        )
+        select(Inventory).where(Inventory.id == inventory_id)
     )
     item = result.scalar_one_or_none()
     

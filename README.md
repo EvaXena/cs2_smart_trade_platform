@@ -21,6 +21,7 @@ A comprehensive CS2/CS:GO trading platform with automated arbitrage, price monit
 - 🔐 **账户安全** - Steam 令牌支持、多因素认证
 - 🌐 **Web 管理面板** - 直观的可视化操作界面
 - 📱 **RESTful API** - 完整的 API 接口支持二次开发
+- 📬 **多渠道通知** - 邮件/Slack/Discord/Telegram 实时推送
 
 ## 📋 目录
 

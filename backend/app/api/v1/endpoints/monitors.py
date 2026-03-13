@@ -4,7 +4,7 @@
 """
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Header
+from fastapi import APIRouter, Depends, status, Query, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -21,6 +21,7 @@ from app.core.idempotency import (
     check_idempotency,
     save_idempotent_response,
 )
+from app.core.permissions_registry import verify_resource_owner
 from app.models.user import User
 from app.models.monitor import MonitorTask, MonitorLog
 from app.schemas.monitor import (
@@ -130,6 +131,7 @@ async def create_monitor(
 
 
 @router.get("/{monitor_id}", response_model=MonitorResponse)
+@verify_resource_owner("monitor", "monitor_id")
 async def get_monitor(
     monitor_id: int,
     current_user: User = Depends(get_current_user),
@@ -137,10 +139,7 @@ async def get_monitor(
 ):
     """获取监控任务详情"""
     result = await db.execute(
-        select(MonitorTask).where(
-            MonitorTask.id == monitor_id,
-            MonitorTask.user_id == current_user.id
-        )
+        select(MonitorTask).where(MonitorTask.id == monitor_id)
     )
     monitor = result.scalar_one_or_none()
     
@@ -154,6 +153,7 @@ async def get_monitor(
 
 
 @router.put("/{monitor_id}", response_model=MonitorResponse)
+@verify_resource_owner("monitor", "monitor_id")
 async def update_monitor(
     monitor_id: int,
     monitor_data: MonitorUpdate,
@@ -162,10 +162,7 @@ async def update_monitor(
 ):
     """更新监控任务"""
     result = await db.execute(
-        select(MonitorTask).where(
-            MonitorTask.id == monitor_id,
-            MonitorTask.user_id == current_user.id
-        )
+        select(MonitorTask).where(MonitorTask.id == monitor_id)
     )
     monitor = result.scalar_one_or_none()
     
@@ -188,6 +185,7 @@ async def update_monitor(
 
 
 @router.delete("/{monitor_id}", status_code=status.HTTP_204_NO_CONTENT)
+@verify_resource_owner("monitor", "monitor_id")
 async def delete_monitor(
     monitor_id: int,
     current_user: User = Depends(get_current_user),
@@ -195,10 +193,7 @@ async def delete_monitor(
 ):
     """删除监控任务"""
     result = await db.execute(
-        select(MonitorTask).where(
-            MonitorTask.id == monitor_id,
-            MonitorTask.user_id == current_user.id
-        )
+        select(MonitorTask).where(MonitorTask.id == monitor_id)
     )
     monitor = result.scalar_one_or_none()
     
@@ -215,6 +210,7 @@ async def delete_monitor(
 
 
 @router.post("/{monitor_id}/start", response_model=MonitorActionResponse)
+@verify_resource_owner("monitor", "monitor_id")
 async def start_monitor(
     monitor_id: int,
     current_user: User = Depends(get_current_user),
@@ -222,10 +218,7 @@ async def start_monitor(
 ):
     """启动监控任务"""
     result = await db.execute(
-        select(MonitorTask).where(
-            MonitorTask.id == monitor_id,
-            MonitorTask.user_id == current_user.id
-        )
+        select(MonitorTask).where(MonitorTask.id == monitor_id)
     )
     monitor = result.scalar_one_or_none()
     
@@ -279,6 +272,7 @@ async def start_monitor(
 
 
 @router.post("/{monitor_id}/stop", response_model=MonitorActionResponse)
+@verify_resource_owner("monitor", "monitor_id")
 async def stop_monitor(
     monitor_id: int,
     current_user: User = Depends(get_current_user),
@@ -286,10 +280,7 @@ async def stop_monitor(
 ):
     """停止监控任务"""
     result = await db.execute(
-        select(MonitorTask).where(
-            MonitorTask.id == monitor_id,
-            MonitorTask.user_id == current_user.id
-        )
+        select(MonitorTask).where(MonitorTask.id == monitor_id)
     )
     monitor = result.scalar_one_or_none()
     
@@ -335,6 +326,7 @@ async def stop_monitor(
 
 
 @router.get("/{monitor_id}/logs", response_model=MonitorLogListResponse)
+@verify_resource_owner("monitor", "monitor_id")
 async def get_monitor_logs(
     monitor_id: int,
     skip: int = Query(0, ge=0),
@@ -343,12 +335,9 @@ async def get_monitor_logs(
     db: AsyncSession = Depends(get_db)
 ):
     """获取监控日志"""
-    # 验证监控任务属于当前用户
+    # 验证监控任务存在
     result = await db.execute(
-        select(MonitorTask).where(
-            MonitorTask.id == monitor_id,
-            MonitorTask.user_id == current_user.id
-        )
+        select(MonitorTask).where(MonitorTask.id == monitor_id)
     )
     monitor = result.scalar_one_or_none()
     

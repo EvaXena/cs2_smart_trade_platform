@@ -38,6 +38,9 @@ class SteamAPI:
     
     # 默认超时配置
     DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
+    # 分类超时配置
+    PRICE_TIMEOUT = aiohttp.ClientTimeout(total=5, connect=3)    # 价格查询：5秒
+    INVENTORY_TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)  # 库存查询：10秒
     
     def __init__(self, api_key: Optional[str] = None, timeout: Optional[aiohttp.ClientTimeout] = None):
         self.api_key = api_key or settings.STEAM_API_KEY
@@ -217,7 +220,8 @@ class SteamAPI:
         url = f"{self.market_url}/priceoverview/"
         
         try:
-            data = await self._request(url, params=params)
+            # 使用价格专用超时 (5秒)
+            data = await self._request(url, params=params, timeout=self.PRICE_TIMEOUT)
             return data
         except Exception as e:
             logger.warning(f"获取价格概览失败: {market_hash_name}, 错误: {e}")
@@ -242,7 +246,8 @@ class SteamAPI:
         url = f"{self.market_url}/itemorders/"
         
         try:
-            data = await self._request(url, params=params)
+            # 使用价格专用超时 (5秒)
+            data = await self._request(url, params=params, timeout=self.PRICE_TIMEOUT)
             return data
         except Exception as e:
             logger.warning(f"获取市场挂单失败: {market_hash_name}, 错误: {e}")
@@ -265,7 +270,8 @@ class SteamAPI:
         url = f"{self.market_url}/pricehistogram/"
         
         try:
-            data = await self._request(url, params=params)
+            # 使用价格专用超时 (5秒)
+            data = await self._request(url, params=params, timeout=self.PRICE_TIMEOUT)
             return data
         except Exception as e:
             logger.warning(f"获取价格直方图失败: {market_hash_name}, 错误: {e}")
@@ -300,7 +306,8 @@ class SteamAPI:
             params["steamid"] = steam_id
         
         try:
-            data = await self._request(url, params=params)
+            # 使用库存专用超时 (10秒)
+            data = await self._request(url, params=params, timeout=self.INVENTORY_TIMEOUT)
             return {
                 "success": True,
                 "assets": data.get("result", {}).get("items", [])

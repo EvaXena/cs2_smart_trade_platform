@@ -46,9 +46,9 @@ class TradingEngine:
         self._task_registry = get_task_registry()
         # 并发控制锁 - 保护 execute_arbitrage 方法
         self._arbitrage_lock = asyncio.Lock()
-        # 导入通知服务
-        from app.services.notification_service import NotificationService, NotificationType, NotificationPriority
-        self.notification_service = NotificationService()
+        # 导入通知服务（使用全局单例）
+        from app.services.notification_service import notification_service as global_notification_service, NotificationType, NotificationPriority
+        self.notification_service = global_notification_service
         self.notification_type = NotificationType
         self.notification_priority = NotificationPriority
     

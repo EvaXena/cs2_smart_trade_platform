@@ -21,8 +21,13 @@ from app.schemas.item import (
     PriceHistoryListResponse,
 )
 from app.utils.validators import validate_item_id, validate_price, validate_limit
+from app.validators.batch_validator import BatchValidator
+from app.schemas.batch import ItemBatchGetRequest, ItemBatchGetResponse
 
 router = APIRouter()
+
+# 创建批量验证器（使用 ItemBatchGetRequest 模型）
+_item_batch_validator = BatchValidator(ItemBatchGetRequest, max_size=100)
 
 
 @router.get("", response_model=ItemListResponse)
@@ -441,4 +446,69 @@ async def get_price_overview(
         "arbitrage_percent": arbitrage_percent,
         "volume_24h": item.volume_24h,
         "price_trend": price_trend,
+    }
+
+
+@router.post("/batch", response_model=ItemBatchGetResponse)
+async def get_items_batch(
+    request: ItemBatchGetRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ItemBatchGetResponse:
+    """
+    批量获取饰品
+    
+    一次性获取多个饰品的详细信息，支持批量查询。
+    
+    ## 参数说明
+    
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | item_ids | List[int] | 是 | 饰品ID列表，最多100个 |
+    
+    ## 返回格式
+    
+    ```json
+    {
+        "items": [...],
+        "found_count": 10,
+        "not_found_ids": [101, 102],
+        "total": 12
+    }
+    ```
+    
+    ## 错误码
+    
+    - 400: 批量大小超限或数据格式错误
+    
+    ## 示例
+    
+    ```bash
+    # 批量获取饰品
+    curl -X POST "http://localhost:8000/api/v1/items/batch" \
+      -H "Content-Type: application/json" \
+      -d '{"item_ids": [1, 2, 3, 100, 200]}'
+    ```
+    """
+    # Pydantic 已在入口处验证（ItemBatchGetRequest），直接使用 request.item_ids
+    # 获取物品ID列表
+    item_ids = request.item_ids
+    
+    # 批量查询
+    query = select(Item).where(Item.id.in_(item_ids))
+    result = await db.execute(query)
+    items = result.scalars().all()
+    
+    # 构建结果
+    found_items = {item.id: item for item in items}
+    found_ids = list(found_items.keys())
+    not_found_ids = [item_id for item_id in item_ids if item_id not in found_ids]
+    
+    # 按原始顺序返回
+    ordered_items = [found_items[item_id] for item_id in item_ids if item_id in found_ids]
+    
+    return {
+        "items": [ItemResponse.model_validate(item) for item in ordered_items],
+        "found_count": len(found_items),
+        "not_found_ids": not_found_ids,
+        "total": len(item_ids)
     }

@@ -81,13 +81,25 @@ class Settings(BaseSettings):
     # 应用基础配置
     APP_NAME: str = "CS2 Trade Platform"
     DEBUG: bool = Field(default=False, description="调试模式，生产环境必须设为 False")
+    ENVIRONMENT: str = Field(default="development", description="运行环境: development, staging, production")
     API_V1_PREFIX: str = "/api/v1"
+    
+    @property
+    def is_production(self) -> bool:
+        """判断是否为生产环境"""
+        # 优先使用 ENVIRONMENT 变量（明确设置时）
+        env = os.environ.get("ENVIRONMENT", "")
+        if env:
+            return env.lower() == "production"
+        # 向后兼容：没有 ENVIRONMENT 时使用 DEBUG
+        return not self.DEBUG
 
     # 数据库配置
     DATABASE_URL: str = "sqlite+aiosqlite:///./cs2trade.db"
 
     # Redis 配置
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_PASSWORD: Optional[str] = Field(default=None, description="Redis 密码（可选）")
 
     # CORS 配置
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
@@ -184,8 +196,22 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # 验证必需的配置
-        if not self.DEBUG and not self.SECRET_KEY:
-            raise ValueError("生产环境必须设置 SECRET_KEY 环境变量")
+        if self.is_production:
+            # 生产环境必须设置 SECRET_KEY
+            if not self.SECRET_KEY:
+                raise ValueError("生产环境必须设置 SECRET_KEY 环境变量")
+            # 生产环境必须验证密钥长度
+            if len(self.SECRET_KEY) < 32:
+                raise ValueError(f"SECRET_KEY 长度必须至少为32字符，当前长度: {len(self.SECRET_KEY)}")
+        else:
+            # 非生产环境警告
+            if not self.SECRET_KEY:
+                import warnings
+                warnings.warn("未设置 SECRET_KEY，使用不安全的默认密钥（仅限开发环境使用）")
+            elif len(self.SECRET_KEY) < 16:
+                import warnings
+                warnings.warn(f"SECRET_KEY 长度过短（{len(self.SECRET_KEY)}字符），建议至少32字符")
+        
         if not self.ENCRYPTION_KEY:
             import warnings
             warnings.warn("未设置 ENCRYPTION_KEY，敏感数据将使用临时密钥加密")

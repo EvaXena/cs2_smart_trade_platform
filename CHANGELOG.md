@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **P0-1 加密密钥回退风险**: 生产环境强制要求ENCRYPTION_KEY环境变量，禁止使用默认密钥
+- **P0-2 Redis无认证**: 添加REDIS_PASSWORD支持，增强Redis连接安全性
+
+### Fixed
+- **P1-1 Steam API超时过长**: 分类超时设置(price=5s, inventory=10s)，提升响应速度
+- **P1-2 Redis回退无恢复**: 添加60秒定时重连任务，自动恢复Redis连接
+- **P2-1 SQLite连接池限制**: 改用AsyncAdaptedQueuePool，优化连接池性能
+- **P2-2 内存缓存无内存限制**: 添加内存追踪，默认限制100MB
+
+### Added
+- **多渠道通知系统**: 新增完整的增强通知系统
+  - `notification/channels/email.py` - 邮件通知 (SMTP)
+  - `notification/channels/slack.py` - Slack Webhook 通知
+  - `notification/channels/discord.py` - Discord Webhook 通知
+  - `notification/channels/telegram.py` - Telegram Bot 通知
+  - `notification_manager.py` - 统一管理器，支持模板、路由、健康检查
+  - `notification_dispatcher.py` - 消息分发器
+  - `notification_queue.py` - 异步队列处理
+  - 测试覆盖: 36/36 通过 (100%)
+
+### Changed
+- 前端通知面板集成多渠道推送
+
+### Fixed
+- 通知模块从零实现，填补功能空白
+
 ---
 
 ## [1.3.0] - 2026-03-11

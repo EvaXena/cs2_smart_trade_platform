@@ -3,7 +3,7 @@
 机器人端点
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Header
+from fastapi import APIRouter, Depends, status, Query, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from sqlalchemy.orm import selectinload
@@ -21,6 +21,7 @@ from app.core.idempotency import (
     check_idempotency,
     save_idempotent_response,
 )
+from app.core.permissions_registry import verify_resource_owner
 from app.models.user import User
 from app.models.bot import Bot, BotTrade
 from app.schemas.bot import (
@@ -153,6 +154,7 @@ async def create_bot(
 
 
 @router.get("/{bot_id}", response_model=BotResponse)
+@verify_resource_owner("bot", "bot_id")
 async def get_bot(
     bot_id: int,
     current_user: User = Depends(get_current_user),
@@ -160,7 +162,7 @@ async def get_bot(
 ):
     """获取机器人详情"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -171,6 +173,7 @@ async def get_bot(
 
 
 @router.put("/{bot_id}", response_model=BotResponse)
+@verify_resource_owner("bot", "bot_id")
 async def update_bot(
     bot_id: int,
     bot_data: BotUpdate,
@@ -179,7 +182,7 @@ async def update_bot(
 ):
     """更新机器人"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -199,6 +202,7 @@ async def update_bot(
 
 
 @router.delete("/{bot_id}", status_code=status.HTTP_204_NO_CONTENT)
+@verify_resource_owner("bot", "bot_id")
 async def delete_bot(
     bot_id: int,
     current_user: User = Depends(get_current_user),
@@ -206,7 +210,7 @@ async def delete_bot(
 ):
     """删除机器人"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -220,6 +224,7 @@ async def delete_bot(
 
 
 @router.post("/{bot_id}/login", response_model=BotLoginResponse)
+@verify_resource_owner("bot", "bot_id")
 async def login_bot(
     bot_id: int,
     login_data: Optional[BotLoginRequest] = None,
@@ -228,7 +233,7 @@ async def login_bot(
 ):
     """登录机器人"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -287,6 +292,7 @@ async def login_bot(
 
 
 @router.post("/{bot_id}/logout", response_model=BotLoginResponse)
+@verify_resource_owner("bot", "bot_id")
 async def logout_bot(
     bot_id: int,
     current_user: User = Depends(get_current_user),
@@ -294,7 +300,7 @@ async def logout_bot(
 ):
     """登出机器人"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -314,6 +320,7 @@ async def logout_bot(
 
 
 @router.post("/{bot_id}/refresh", response_model=BotLoginResponse)
+@verify_resource_owner("bot", "bot_id")
 async def refresh_bot_session(
     bot_id: int,
     current_user: User = Depends(get_current_user),
@@ -321,7 +328,7 @@ async def refresh_bot_session(
 ):
     """刷新机器人 session"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -359,6 +366,7 @@ async def refresh_bot_session(
 
 
 @router.get("/{bot_id}/inventory", response_model=BotInventoryResponse)
+@verify_resource_owner("bot", "bot_id")
 async def get_bot_inventory(
     bot_id: int,
     current_user: User = Depends(get_current_user),
@@ -366,7 +374,7 @@ async def get_bot_inventory(
 ):
     """获取机器人库存"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 
@@ -403,6 +411,7 @@ async def get_bot_inventory(
 
 
 @router.get("/{bot_id}/trades", response_model=BotTradeResponse)
+@verify_resource_owner("bot", "bot_id")
 async def get_bot_trades(
     bot_id: int,
     skip: int = Query(0, ge=0),
@@ -412,7 +421,7 @@ async def get_bot_trades(
 ):
     """获取机器人交易记录"""
     result = await db.execute(
-        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+        select(Bot).where(Bot.id == bot_id)
     )
     bot = result.scalar_one_or_none()
 

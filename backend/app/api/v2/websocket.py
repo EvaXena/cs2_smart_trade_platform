@@ -15,6 +15,7 @@ from jose import JWTError, jwt, ExpiredSignatureError
 from app.services.notification_service import ws_manager, notification_service, NotificationType
 from app.core.security import get_current_user, decode_token
 from app.core.config import settings
+from app.core.rate_limiter import RateLimiter
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -286,7 +287,25 @@ async def websocket_endpoint(
             if user_id:
                 ws_manager.disconnect(websocket)
     else:
-        # 匿名模式（只读）
+        # 匿名模式（只读）- 添加限流
+        # 为匿名连接创建限流器
+        rate_limiter = RateLimiter()
+        
+        # 使用客户端IP作为限流标识
+        client_ip = websocket.client.host if websocket.client else "unknown"
+        rate_limit_key = f"ws_anonymous:{client_ip}"
+        
+        # 检查限流（匿名模式限制更严格）
+        allowed, retry_after = await rate_limiter.check_rate_limit(
+            rate_limit_key, user_id=None
+        )
+        
+        if not allowed:
+            await websocket.accept()
+            await websocket.close(code=4003, reason="Too many anonymous connections")
+            logger.warning(f"Anonymous WebSocket rate limit exceeded for {client_ip}")
+            return
+        
         await websocket.accept()
         
         try:
@@ -301,6 +320,19 @@ async def websocket_endpoint(
             while True:
                 try:
                     data = await websocket.receive_text()
+                    
+                    # 对匿名消息也进行限流
+                    allowed, retry_after = await rate_limiter.check_rate_limit(
+                        rate_limit_key, user_id=None
+                    )
+                    if not allowed:
+                        await websocket.send_json({
+                            "type": "rate_limit_exceeded",
+                            "message": "消息发送过于频繁，请稍后再试",
+                            "retry_after": int(retry_after) if retry_after else 60
+                        })
+                        continue
+                    
                     message = json.loads(data)
                     
                     if message.get("type") == "ping":

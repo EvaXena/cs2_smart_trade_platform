@@ -148,4 +148,8 @@ def create_api_router():
             "successor_version": "v2"
         }
     
+    # 注册所有资源获取函数（权限检查器需要）
+    from app.core.permissions_registry import register_all_resource_getters
+    register_all_resource_getters()
+    
     return router
