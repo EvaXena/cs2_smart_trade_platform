@@ -113,9 +113,12 @@ class SyncInventoryResponse(BaseModel):
 
 class BatchListingRequest(BaseModel):
     """批量上架请求"""
-    inventory_ids: List[int]
-    price: Decimal = Field(..., decimal_places=2)
+    inventory_ids: Optional[List[int]] = Field(None, alias="item_ids")
+    price: Optional[Decimal] = Field(None, decimal_places=2)
     platform: str = "steam"
+    
+    class Config:
+        populate_by_name = True
 
 
 class BatchUnlistRequest(BaseModel):

@@ -223,6 +223,58 @@ async def get_orders_enhanced(
     }
 
 
+@router.get("/stats/summary")
+async def get_stats_summary_v2(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取统计摘要 v2"""
+    from app.models.order import Order
+    from app.models.inventory import Inventory
+    from app.models.bot import Bot
+    
+    # 订单统计
+    orders_result = await db.execute(
+        select(func.count(), func.sum(Order.total_price))
+        .where(Order.user_id == current_user.id)
+    )
+    orders_count, orders_sum = orders_result.first()
+    
+    # 库存统计
+    inv_result = await db.execute(
+        select(func.count())
+        .where(Inventory.user_id == current_user.id)
+    )
+    inv_count = inv_result.scalar() or 0
+    
+    # 机器人统计
+    bots_result = await db.execute(
+        select(func.count())
+        .where(Bot.owner_id == current_user.id)
+    )
+    bots_count = bots_result.scalar() or 0
+    
+    online_bots_result = await db.execute(
+        select(func.count())
+        .where(Bot.owner_id == current_user.id, Bot.status == 'online')
+    )
+    online_bots = online_bots_result.scalar() or 0
+    
+    return {
+        "orders": {
+            "total": orders_count or 0,
+            "total_amount": float(orders_sum or 0),
+        },
+        "inventory": {
+            "total_items": inv_count,
+        },
+        "bots": {
+            "total": bots_count,
+            "online": online_bots,
+        },
+    }
+
+
 @router.get("/stats/realtime")
 async def get_realtime_stats(
     current_user: User = Depends(get_current_user),

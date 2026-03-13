@@ -38,8 +38,8 @@ class TestMemoryCacheCluster:
         # cache1 订阅 cache2
         cache1.subscribe(cache2)
         
-        # 验证订阅关系
-        assert cache2._node_id in cache1._subscribers
+        # 验证订阅关系 - cache1订阅了cache2，所以cache2在cache1的subscriptions中
+        assert cache2._node_id in cache1._subscriptions
     
     def test_unsubscribe(self):
         """测试取消订阅"""
@@ -49,7 +49,8 @@ class TestMemoryCacheCluster:
         cache1.subscribe(cache2)
         cache1.unsubscribe("node-2")
         
-        assert "node-2" not in cache1._subscribers
+        # 验证取消订阅后，cache2不再在cache1的subscriptions中
+        assert "node-2" not in cache1._subscriptions
     
     def test_remote_delete_notification(self):
         """测试远程删除通知"""
@@ -138,7 +139,7 @@ class TestCacheManagerCluster:
         
         manager1.register_to_cluster(manager2)
         
-        # 验证注册成功
+        # 验证注册成功 - 双向订阅，所以manager2在manager1的subscribers中
         assert manager2.get_node_id() in [
             sub._node_id for sub in manager1._memory_cache._subscribers.values()
         ]

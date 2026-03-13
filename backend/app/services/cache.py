@@ -141,6 +141,9 @@ class MemoryCache:
         self._misses = 0
         # 集群支持
         self._node_id = node_id or f"node-{id(self)}"
+        # _subscriptions: 当前节点订阅的其他节点（当这些节点更新时，我们收到通知）
+        self._subscriptions: Dict[str, 'MemoryCache'] = {}
+        # _subscribers: 订阅当前节点的 other nodes（当当前节点更新时，通知它们）
         self._subscribers: Dict[str, 'MemoryCache'] = {}
     
     def set_node_id(self, node_id: str) -> None:
@@ -153,14 +156,22 @@ class MemoryCache:
     
     def subscribe(self, other_cache: 'MemoryCache') -> None:
         """订阅另一个缓存节点的更新"""
-        self._subscribers[other_cache._node_id] = other_cache
+        # 记录我们订阅了哪个节点
+        self._subscriptions[other_cache._node_id] = other_cache
+        # 注册到对方的订阅者列表，这样对方更新时会通知我们
+        other_cache._subscribers[self._node_id] = self
     
     def unsubscribe(self, node_id: str) -> None:
         """取消订阅"""
-        if node_id in self._subscribers:
-            del self._subscribers[node_id]
+        # 从我们的订阅列表中移除
+        if node_id in self._subscriptions:
+            other_cache = self._subscriptions[node_id]
+            del self._subscriptions[node_id]
+            # 从对方的订阅者列表中移除我们
+            if self._node_id in other_cache._subscribers:
+                del other_cache._subscribers[self._node_id]
     
-    def _notify_subscribers(self, operation: str, key: str) -> None:
+    def _notify_subscribers(self, operation: str, key: str, value: Any = None) -> None:
         """通知订阅者缓存变更"""
         for node_id, subscriber in self._subscribers.items():
             try:
@@ -168,6 +179,10 @@ class MemoryCache:
                     subscriber._handle_remote_delete(key)
                 elif operation == "clear":
                     subscriber._handle_remote_clear()
+                elif operation == "set":
+                    subscriber._handle_remote_set(key, value)
+                elif operation == "invalidate":
+                    subscriber._handle_remote_invalidate(key)
             except Exception as e:
                 logger.warning(f"Failed to notify subscriber {node_id}: {e}")
     
@@ -181,6 +196,22 @@ class MemoryCache:
         """处理远程清空通知"""
         with self._lock:
             self._cache.clear()
+    
+    def _handle_remote_invalidate(self, key: str) -> None:
+        """处理远程失效通知（不清除本地，只是标记失效）"""
+        # 不做任何操作，只是通知
+        # 订阅者可以自行决定如何处理（例如重新从数据源获取）
+        pass
+    
+    def _handle_remote_set(self, key: str, value: Any) -> None:
+        """处理远程设置通知"""
+        with self._lock:
+            # 直接设置值，保持原 TTL
+            if key in self._cache:
+                old_entry = self._cache[key]
+                self._cache[key] = CacheEntry(value, old_entry.ttl)
+            else:
+                self._cache[key] = CacheEntry(value, 300)  # 默认 TTL
     
     def _evict_if_needed(self) -> None:
         """当缓存满时淘汰最旧的条目（LRU）"""
@@ -219,12 +250,17 @@ class MemoryCache:
             self._cache[key] = CacheEntry(value, ttl)
             # 移动到末尾（最新）
             self._cache.move_to_end(key)
+        
+        # 在锁外通知订阅者，避免死锁
+        self._notify_subscribers("set", key, value)
     
     def delete(self, key: str) -> bool:
         """删除缓存"""
         with self._lock:
             if key in self._cache:
                 del self._cache[key]
+                # 在锁外通知订阅者
+                self._notify_subscribers("delete", key)
                 return True
             return False
     
@@ -234,6 +270,8 @@ class MemoryCache:
             self._cache.clear()
             self._hits = 0
             self._misses = 0
+        # 在锁外通知订阅者
+        self._notify_subscribers("clear", "")
     
     def cleanup_expired(self) -> int:
         """清理过期缓存"""
@@ -1053,18 +1091,24 @@ class CacheManager:
     def register_to_cluster(self, other_cache: 'CacheManager') -> None:
         """注册到集群（与其他缓存节点同步）"""
         if self._current_backend == CacheBackend.MEMORY and other_cache._current_backend == CacheBackend.MEMORY:
+            # 双向订阅：双方都订阅对方的更新
             self._memory_cache.subscribe(other_cache._memory_cache)
+            other_cache._memory_cache.subscribe(self._memory_cache)
             logger.info(f"Registered to cluster with node: {other_cache.get_node_id()}")
     
     def broadcast_invalidation(self, key: str) -> None:
         """广播缓存失效通知到集群"""
         if self._current_backend == CacheBackend.MEMORY:
-            self._memory_cache._notify_subscribers("delete", key)
+            # 使用 invalidate 操作，通知订阅者但不清除本地
+            self._memory_cache._notify_subscribers("invalidate", key)
             logger.debug(f"Broadcast cache invalidation for key: {key}")
     
     def broadcast_clear(self) -> None:
         """广播缓存清空通知到集群"""
         if self._current_backend == CacheBackend.MEMORY:
+            # 清空本地
+            self._memory_cache.clear()
+            # 通知订阅者
             self._memory_cache._notify_subscribers("clear", "")
             logger.debug("Broadcast cache clear to cluster")
 

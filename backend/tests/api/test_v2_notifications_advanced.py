@@ -31,9 +31,10 @@ async def create_test_notification(
     notification_type: str = "price_alert"
 ) -> Notification:
     """创建测试通知"""
+    from app.models.notification import NotificationType
     notification = Notification(
         user_id=user.id,
-        type=notification_type,
+        notification_type=NotificationType.PRICE_ALERT if notification_type == "price_alert" else NotificationType.SYSTEM,
         title="Test Notification",
         content="This is a test notification",
         is_read=False

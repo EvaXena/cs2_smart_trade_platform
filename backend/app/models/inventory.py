@@ -30,8 +30,9 @@ class Inventory(Base):
     # 数量
     amount = Column(Integer, default=1)
     
-    # 成本
+    # 成本/售价
     cost_price = Column(Numeric(12, 2), nullable=True)  # 成本价
+    price = Column(Numeric(12, 2), nullable=True)  # 售价/当前价格
     
     # 状态
     status = Column(String(20), default='available', index=True)  # available / listing / trading / sold

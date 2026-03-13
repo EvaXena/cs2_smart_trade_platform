@@ -29,6 +29,44 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/stats/summary")
+async def get_monitors_summary(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取监控统计摘要 v2"""
+    # 统计各状态的监控数量
+    status_result = await db.execute(
+        select(MonitorTask.status, func.count(MonitorTask.id))
+        .where(MonitorTask.user_id == current_user.id)
+        .group_by(MonitorTask.status)
+    )
+    status_counts = {row[0]: row[1] for row in status_result.all()}
+    
+    # 启用的监控
+    enabled_result = await db.execute(
+        select(func.count(MonitorTask.id))
+        .where(MonitorTask.user_id == current_user.id, MonitorTask.enabled == True)
+    )
+    enabled_count = enabled_result.scalar() or 0
+    
+    # 总数
+    total_result = await db.execute(
+        select(func.count(MonitorTask.id)).where(MonitorTask.user_id == current_user.id)
+    )
+    total = total_result.scalar() or 0
+    
+    return {
+        "total": total,
+        "enabled": enabled_count,
+        "disabled": total - enabled_count,
+        "running": status_counts.get('running', 0),
+        "stopped": status_counts.get('stopped', 0),
+        "idle": status_counts.get('idle', 0),
+        "error": status_counts.get('error', 0)
+    }
+
+
 @router.get("/", response_model=MonitorListResponse)
 async def get_monitors(
     skip: int = Query(0, ge=0),
@@ -455,41 +493,3 @@ async def get_monitor_logs(
         skip=skip,
         limit=limit
     )
-
-
-@router.get("/stats/summary")
-async def get_monitors_summary(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """获取监控统计摘要 v2"""
-    # 统计各状态的监控数量
-    status_result = await db.execute(
-        select(MonitorTask.status, func.count(MonitorTask.id))
-        .where(MonitorTask.user_id == current_user.id)
-        .group_by(MonitorTask.status)
-    )
-    status_counts = {row[0]: row[1] for row in status_result.all()}
-    
-    # 启用的监控
-    enabled_result = await db.execute(
-        select(func.count(MonitorTask.id))
-        .where(MonitorTask.user_id == current_user.id, MonitorTask.enabled == True)
-    )
-    enabled_count = enabled_result.scalar() or 0
-    
-    # 总数
-    total_result = await db.execute(
-        select(func.count(MonitorTask.id)).where(MonitorTask.user_id == current_user.id)
-    )
-    total = total_result.scalar() or 0
-    
-    return {
-        "total": total,
-        "enabled": enabled_count,
-        "disabled": total - enabled_count,
-        "running": status_counts.get('running', 0),
-        "stopped": status_counts.get('stopped', 0),
-        "idle": status_counts.get('idle', 0),
-        "error": status_counts.get('error', 0)
-    }

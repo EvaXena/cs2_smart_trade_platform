@@ -285,7 +285,7 @@ class TestErrorHandlers:
     def test_generic_handler(self):
         """测试通用错误处理"""
         app = create_test_app()
-        client = TestClient(app)
+        client = TestClient(app, raise_server_exceptions=False)
         
         response = client.get("/test-generic")
         

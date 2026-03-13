@@ -30,6 +30,85 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/online")
+async def get_online_bots(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取所有在线机器人 v2"""
+    result = await db.execute(
+        select(Bot).where(
+            Bot.owner_id == current_user.id,
+            Bot.status == 'online'
+        )
+    )
+    bots = result.scalars().all()
+    return bots
+
+
+@router.post("/batch-status")
+async def batch_update_bot_status(
+    status: str = Query(..., description="目标状态: online/offline/error"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """批量更新机器人状态 v2"""
+    if status not in ['online', 'offline', 'error', 'maintenance']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="无效的状态值"
+        )
+    
+    result = await db.execute(
+        select(Bot).where(Bot.owner_id == current_user.id)
+    )
+    bots = result.scalars().all()
+    
+    updated_count = 0
+    for bot in bots:
+        bot.status = status
+        bot.updated_at = datetime.utcnow()
+        updated_count += 1
+    
+    await db.commit()
+    
+    return {
+        "success": True,
+        "updated": updated_count,
+        "status": status
+    }
+
+
+@router.get("/stats/summary")
+async def get_bots_summary(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取机器人统计摘要 v2"""
+    # 统计各状态的机器人数量
+    result = await db.execute(
+        select(Bot.status, func.count(Bot.id))
+        .where(Bot.owner_id == current_user.id)
+        .group_by(Bot.status)
+    )
+    
+    status_counts = {row[0]: row[1] for row in result.all()}
+    
+    # 总数
+    total_result = await db.execute(
+        select(func.count(Bot.id)).where(Bot.owner_id == current_user.id)
+    )
+    total = total_result.scalar() or 0
+    
+    return {
+        "total": total,
+        "online": status_counts.get('online', 0),
+        "offline": status_counts.get('offline', 0),
+        "error": status_counts.get('error', 0),
+        "maintenance": status_counts.get('maintenance', 0)
+    }
+
+
 @router.get("/", response_model=List[BotResponse])
 async def get_bots(
     skip: int = Query(0, ge=0),
@@ -496,33 +575,3 @@ async def get_bot_trades(
     trades = result.scalars().all()
     
     return trades
-
-
-@router.get("/stats/summary")
-async def get_bots_summary(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """获取机器人统计摘要 v2"""
-    # 统计各状态的机器人数量
-    result = await db.execute(
-        select(Bot.status, func.count(Bot.id))
-        .where(Bot.owner_id == current_user.id)
-        .group_by(Bot.status)
-    )
-    
-    status_counts = {row[0]: row[1] for row in result.all()}
-    
-    # 总数
-    total_result = await db.execute(
-        select(func.count(Bot.id)).where(Bot.owner_id == current_user.id)
-    )
-    total = total_result.scalar() or 0
-    
-    return {
-        "total": total,
-        "online": status_counts.get('online', 0),
-        "offline": status_counts.get('offline', 0),
-        "error": status_counts.get('error', 0),
-        "maintenance": status_counts.get('maintenance', 0)
-    }
