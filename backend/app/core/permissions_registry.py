@@ -173,37 +173,47 @@ class ResourceGetter:
     """
     
     @staticmethod
-    async def get_order(order_id: Any) -> Optional[Any]:
+    async def get_order(order_id: Any, db: AsyncSession = None) -> Optional[Any]:
         """获取订单资源"""
         from app.core.database import async_session_maker
+        if db is not None:
+            return await get_order_by_order_id(order_id, db)
         async with async_session_maker() as db:
             return await get_order_by_order_id(order_id, db)
     
     @staticmethod
-    async def get_inventory(inventory_id: Any) -> Optional[Any]:
+    async def get_inventory(inventory_id: Any, db: AsyncSession = None) -> Optional[Any]:
         """获取库存资源"""
         from app.core.database import async_session_maker
+        if db is not None:
+            return await get_inventory_by_id(inventory_id, db)
         async with async_session_maker() as db:
             return await get_inventory_by_id(inventory_id, db)
     
     @staticmethod
-    async def get_monitor(monitor_id: Any) -> Optional[Any]:
+    async def get_monitor(monitor_id: Any, db: AsyncSession = None) -> Optional[Any]:
         """获取监控资源"""
         from app.core.database import async_session_maker
+        if db is not None:
+            return await get_monitor_by_id(monitor_id, db)
         async with async_session_maker() as db:
             return await get_monitor_by_id(monitor_id, db)
     
     @staticmethod
-    async def get_bot(bot_id: Any) -> Optional[Any]:
+    async def get_bot(bot_id: Any, db: AsyncSession = None) -> Optional[Any]:
         """获取机器人资源"""
         from app.core.database import async_session_maker
+        if db is not None:
+            return await get_bot_by_id(bot_id, db)
         async with async_session_maker() as db:
             return await get_bot_by_id(bot_id, db)
     
     @staticmethod
-    async def get_listing(listing_id: Any) -> Optional[Any]:
+    async def get_listing(listing_id: Any, db: AsyncSession = None) -> Optional[Any]:
         """获取上架记录资源"""
         from app.core.database import async_session_maker
+        if db is not None:
+            return await get_listing_by_id(listing_id, db)
         async with async_session_maker() as db:
             return await get_listing_by_id(listing_id, db)
 
@@ -324,16 +334,35 @@ def verify_resource_owner(
                     detail="权限检查配置错误"
                 )
             
-            # 使用数据库会话获取资源
-            async with async_session_maker() as db:
+            # 优先使用依赖注入的数据库会话，否则使用全局session_maker
+            injected_db = kwargs.get('db')
+            if injected_db is not None:
+                # 使用注入的会话
                 try:
-                    resource = await getter(resource_id)
+                    resource = await getter(resource_id, injected_db)
                 except Exception as e:
                     logger.error(f"获取资源失败: {resource_type}:{resource_id}, error: {e}")
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="资源获取失败"
                     )
+                
+                if not resource:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"资源不存在: {resource_type}:{resource_id}"
+                    )
+            else:
+                # 使用全局会话
+                async with async_session_maker() as db:
+                    try:
+                        resource = await getter(resource_id)
+                    except Exception as e:
+                        logger.error(f"获取资源失败: {resource_type}:{resource_id}, error: {e}")
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="资源获取失败"
+                        )
                 
                 if not resource:
                     raise HTTPException(

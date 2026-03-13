@@ -489,9 +489,6 @@ async def get_items_batch(
       -d '{"item_ids": [1, 2, 3, 100, 200]}'
     ```
     """
-    # 使用 BatchValidator 验证批量请求
-    _item_batch_validator.validate(request.item_ids)
-    
     # 批量查询
     item_ids = request.item_ids
     

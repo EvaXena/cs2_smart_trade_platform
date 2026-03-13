@@ -179,3 +179,71 @@ async def auth_token(client: AsyncClient) -> str:
     if response.status_code == 200:
         return response.json()["access_token"]
     return None
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_user(client: AsyncClient) -> dict:
+    """创建测试用户1并返回用户信息和token"""
+    import random
+    
+    username = f"user1_{random.randint(1000, 9999)}"
+    
+    # 注册用户
+    reg_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": username,
+            "password": "Testpass123",
+            "email": f"{username}@example.com"
+        }
+    )
+    
+    # 登录获取token
+    login_response = await client.post(
+        "/api/v1/auth/login",
+        data={
+            "username": username,
+            "password": "Testpass123"
+        }
+    )
+    
+    if login_response.status_code == 200:
+        return {
+            "username": username,
+            "token": login_response.json()["access_token"]
+        }
+    return None
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_user2(client: AsyncClient) -> dict:
+    """创建测试用户2并返回用户信息和token"""
+    import random
+    
+    username = f"user2_{random.randint(1000, 9999)}"
+    
+    # 注册用户
+    reg_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": username,
+            "password": "Testpass123",
+            "email": f"{username}@example.com"
+        }
+    )
+    
+    # 登录获取token
+    login_response = await client.post(
+        "/api/v1/auth/login",
+        data={
+            "username": username,
+            "password": "Testpass123"
+        }
+    )
+    
+    if login_response.status_code == 200:
+        return {
+            "username": username,
+            "token": login_response.json()["access_token"]
+        }
+    return None
