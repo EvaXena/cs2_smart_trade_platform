@@ -26,12 +26,15 @@ async def create_test_user(test_db: AsyncSession, username: str = "testuser") ->
     return user
 
 
+import random
+
 async def create_test_item(test_db: AsyncSession, name: str = "Test Item") -> Item:
     """创建测试饰品"""
+    unique_suffix = random.randint(10000, 99999)
     item = Item(
         name=name,
         name_cn="测试饰品",
-        market_hash_name="Test_Item",
+        market_hash_name=f"Test_Item_{unique_suffix}",
         category="weapon",
         rarity="covert",
         exterior="factory_new",
@@ -61,7 +64,7 @@ async def create_test_inventory_item(
         class_id="12345",
         instance_id="67890",
         amount=1,
-        price=100.0,
+        cost_price=100.0,
         status=status
     )
     test_db.add(inventory_item)

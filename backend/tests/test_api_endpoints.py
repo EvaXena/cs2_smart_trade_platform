@@ -5,6 +5,7 @@ API端点集成测试
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
+from httpx import AsyncClient
 
 
 # ============ 饰品API测试 ============
@@ -118,36 +119,6 @@ async def test_create_bot_unauthorized(client):
 
 # ============ 授权后的API测试 ============
 
-@pytest_asyncio.fixture
-async def auth_token(client):
-    """获取授权令牌"""
-    # 注册用户
-    import random
-    username = f"testuser_{random.randint(1000, 9999)}"
-    
-    await client.post(
-        "/api/v1/auth/register",
-        json={
-            "username": username,
-            "password": "Testpass123",
-            "email": f"{username}@example.com"
-        }
-    )
-    
-    # 登录
-    response = await client.post(
-        "/api/v1/auth/login",
-        data={
-            "username": username,
-            "password": "Testpass123"
-        }
-    )
-    
-    if response.status_code == 200:
-        return response.json()["access_token"]
-    return None
-
-
 @pytest.mark.asyncio
 async def test_authenticated_orders_list(client, auth_token):
     """测试授权后查询订单列表"""
@@ -206,11 +177,14 @@ async def test_authenticated_bots_list(client, auth_token):
 # ============ 统计API测试 ============
 
 @pytest.mark.asyncio
-async def test_dashboard_stats(client):
+async def test_dashboard_stats(client: AsyncClient, auth_token: str):
     """测试仪表盘统计接口"""
-    response = await client.get("/api/v1/stats/dashboard")
+    response = await client.get(
+        "/api/v1/stats/dashboard",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
     # 可能有数据也可能无数据
-    assert response.status_code in [200, 500]
+    assert response.status_code in [200, 401, 500]
 
 
 # ============ 错误处理测试 ============

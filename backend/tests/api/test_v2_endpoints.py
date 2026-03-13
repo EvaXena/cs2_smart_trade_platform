@@ -73,7 +73,7 @@ async def test_v2_refresh_token(client: AsyncClient, test_db: AsyncSession):
     headers = await get_auth_header(user)
     
     response = await client.post(
-        "/api/v2/auth/refresh",
+        "/api/v2/auth/refresh?refresh_token=test_token",
         headers=headers
     )
     assert response.status_code in [200, 401]
@@ -184,7 +184,7 @@ async def test_v2_sync_inventory(client: AsyncClient, test_db: AsyncSession):
     user = await create_test_user(test_db)
     headers = await get_auth_header(user)
     
-    response = await client.post("/api/v2/inventory/sync", headers=headers)
+    response = await client.post("/api/v2/inventory/sync?platform=steam", headers=headers)
     assert response.status_code in [200, 401, 400]
 
 
@@ -291,4 +291,5 @@ async def test_v2_clear_notifications(client: AsyncClient, test_db: AsyncSession
     headers = await get_auth_header(user)
     
     response = await client.delete("/api/v2/notifications/", headers=headers)
-    assert response.status_code in [200, 401]
+    # 204 No Content 也是成功状态
+    assert response.status_code in [200, 204, 401]

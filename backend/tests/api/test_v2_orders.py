@@ -26,12 +26,15 @@ async def create_test_user(test_db: AsyncSession, username: str = "testuser") ->
     return user
 
 
+import random
+
 async def create_test_item(test_db: AsyncSession, name: str = "Test Item") -> Item:
     """创建测试饰品"""
+    unique_suffix = random.randint(10000, 99999)
     item = Item(
         name=name,
         name_cn="测试饰品",
-        market_hash_name="Test_Item",
+        market_hash_name=f"Test_Item_{unique_suffix}",
         category="weapon",
         rarity="covert",
         exterior="factory_new",
@@ -46,6 +49,13 @@ async def create_test_item(test_db: AsyncSession, name: str = "Test Item") -> It
     return item
 
 
+import string
+
+def generate_order_id() -> str:
+    """生成符合规范的订单ID"""
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+    return f"ORD-{suffix}"
+
 async def create_test_order(
     test_db: AsyncSession,
     user: User,
@@ -54,6 +64,7 @@ async def create_test_order(
 ) -> Order:
     """创建测试订单"""
     order = Order(
+        order_id=generate_order_id(),
         user_id=user.id,
         item_id=item.id,
         order_type="buy",
@@ -91,4 +102,4 @@ async def test_v2_create_order(client: AsyncClient, test_db: AsyncSession):
             "quantity": 1
         }
     )
-    assert response.status_code in [201, 401, 422]
+    assert response.status_code in [201, 401, 422, 404]

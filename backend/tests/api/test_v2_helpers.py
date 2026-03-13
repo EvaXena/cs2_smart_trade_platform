@@ -89,6 +89,14 @@ async def create_test_inventory_item(
     return inventory_item
 
 
+import random
+import string
+
+def generate_order_id() -> str:
+    """生成符合规范的订单ID"""
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+    return f"ORD-{suffix}"
+
 async def create_test_order(
     test_db: AsyncSession,
     user: User,
@@ -97,6 +105,7 @@ async def create_test_order(
 ) -> Order:
     """创建测试订单"""
     order = Order(
+        order_id=generate_order_id(),
         user_id=user.id,
         item_id=item.id,
         order_type="buy",

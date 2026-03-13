@@ -301,10 +301,11 @@ async def sync_inventory(
     current_count = result.scalar() or 0
     
     return SyncInventoryResponse(
-        platform=platform,
-        synced_items=synced_count,
-        total_items=current_count,
-        timestamp=datetime.utcnow()
+        success=True,
+        message=f"Successfully synced {synced_count} items",
+        added_count=synced_count,
+        updated_count=0,
+        removed_count=0
     )
 
 

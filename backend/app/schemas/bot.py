@@ -32,9 +32,8 @@ class BotUpdate(BaseModel):
 class BotInDB(BotBase):
     """数据库机器人"""
     id: int
-    session_token: Optional[str] = None
-    ma_file: Optional[str] = None
-    access_token: Optional[str] = None
+    # 敏感字段通过属性方法解密，不直接暴露在 API 响应中
+    # 使用 exclude 避免 Pydantic 从 ORM 属性方法读取敏感数据
     status: str = 'offline'
     inventory_count: int = 0
     total_trades: int = 0
@@ -50,8 +49,11 @@ class BotInDB(BotBase):
 
 
 class BotResponse(BotInDB):
-    """机器人响应"""
-    pass
+    """机器人响应 - 排除敏感字段"""
+    model_config = ConfigDict(
+        from_attributes=True,
+        exclude={'session_token', 'ma_file', 'access_token'}
+    )
 
 
 class BotLoginRequest(BaseModel):

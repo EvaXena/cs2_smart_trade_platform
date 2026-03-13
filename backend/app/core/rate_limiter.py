@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-限流器
+限流器 - 支持本地和分布式 Redis 限流
 """
 import asyncio
 import logging
@@ -8,10 +8,17 @@ import time
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
+from enum import Enum
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimitBackend(str, Enum):
+    """限流后端类型"""
+    MEMORY = "memory"
+    REDIS = "redis"
 
 
 @dataclass
@@ -74,9 +81,10 @@ class RateLimiter:
     限流器
     
     支持：
-    - 滑动窗口限流
+    - 滑动窗口限流（本地/Redis分布式）
     - 令牌桶算法（用于突发流量）
     - 从settings读取配置
+    - Redis 分布式环境支持
     """
     
     def __init__(self):
@@ -86,6 +94,32 @@ class RateLimiter:
         self._default_requests = settings.RATE_LIMIT_DEFAULT_REQUESTS
         self._default_window = settings.RATE_LIMIT_DEFAULT_WINDOW
         self._default_burst = settings.RATE_LIMIT_DEFAULT_BURST
+        
+        # Redis 分布式限流支持
+        self._redis_limiter: Optional[RedisRateLimiter] = None
+        self._use_redis = getattr(settings, 'RATE_LIMIT_USE_REDIS', False) and settings.REDIS_URL
+        self._redis_backend: Optional[RateLimitBackend] = None
+    
+    async def initialize_redis(self) -> bool:
+        """初始化 Redis 限流器"""
+        if not self._use_redis:
+            return False
+        
+        if self._redis_limiter is None:
+            self._redis_limiter = RedisRateLimiter(settings.REDIS_URL)
+            connected = await self._redis_limiter.connect()
+            if connected:
+                self._redis_backend = RateLimitBackend.REDIS
+                logger.info("Rate limiter initialized with Redis backend")
+                return True
+        
+        return False
+    
+    def _get_backend(self) -> RateLimitBackend:
+        """获取当前使用的后端"""
+        if self._redis_backend:
+            return self._redis_backend
+        return RateLimitBackend.MEMORY
     
     def _get_config(self, key: str) -> RateLimitConfig:
         """
@@ -137,6 +171,16 @@ class RateLimiter:
             key = f"{key}:{user_id}"
         
         config = self._get_config(key)
+        
+        # 尝试使用 Redis 分布式限流
+        if self._redis_limiter and self._redis_backend == RateLimitBackend.REDIS:
+            result = await self._redis_limiter.check_rate_limit(
+                key, config.requests, config.window
+            )
+            if result[0] is not None:
+                return result
+        
+        # 回退到内存限流
         now = time.time()
         
         # 滑动窗口清理
@@ -235,3 +279,131 @@ def get_rate_limiter() -> RateLimiter:
     if _rate_limiter_instance is None:
         _rate_limiter_instance = RateLimiter()
     return _rate_limiter_instance
+
+
+class RedisRateLimiter:
+    """
+    Redis 分布式限流器
+    
+    使用 Redis 的有序集合（ZSET）实现滑动窗口限流，
+    支持分布式环境下的统一限流计数。
+    """
+    
+    def __init__(self, redis_url: str = None):
+        self._redis_url = redis_url or "redis://localhost:6379/0"
+        self._redis = None
+        self._connected = False
+    
+    async def connect(self) -> bool:
+        """连接 Redis"""
+        try:
+            import redis.asyncio as redis
+            self._redis = redis.from_url(
+                self._redis_url,
+                encoding="utf-8",
+                decode_responses=True
+            )
+            await self._redis.ping()
+            self._connected = True
+            logger.info("Redis rate limiter connected")
+            return True
+        except Exception as e:
+            logger.warning(f"Redis rate limiter connection failed: {e}")
+            self._connected = False
+            return False
+    
+    async def disconnect(self) -> None:
+        """断开 Redis 连接"""
+        if self._redis:
+            await self._redis.close()
+            self._redis = None
+            self._connected = False
+    
+    async def check_rate_limit(
+        self,
+        key: str,
+        requests: int,
+        window: int
+    ) -> Tuple[bool, Optional[float]]:
+        """
+        检查是否触发限流（滑动窗口算法）
+        
+        Args:
+            key: 限流标识
+            requests: 时间窗口内允许的请求数
+            window: 时间窗口（秒）
+        
+        Returns:
+            (是否允许, 剩余时间)
+        """
+        if not self._connected:
+            # 未连接时回退到内存限流
+            return None, None
+        
+        try:
+            now = time.time()
+            window_start = now - window
+            
+            # 使用 Redis ZSET 实现滑动窗口
+            redis_key = f"ratelimit:{key}"
+            
+            # 移除窗口外的请求记录
+            await self._redis.zremrangebyscore(redis_key, 0, window_start)
+            
+            # 获取当前请求数
+            current_count = await self._redis.zcard(redis_key)
+            
+            if current_count >= requests:
+                # 获取最旧的请求时间，计算剩余等待时间
+                oldest = await self._redis.zrange(redis_key, 0, 0, withscores=True)
+                if oldest:
+                    oldest_timestamp = oldest[0][1]
+                    retry_after = oldest_timestamp + window - now
+                    logger.warning(f"限流触发: key={key}, retry_after={retry_after:.2f}s")
+                    return False, retry_after
+                return False, window
+            
+            # 记录当前请求
+            await self._redis.zadd(redis_key, {f"{now}": now})
+            # 设置过期时间，自动清理过期记录
+            await self._redis.expire(redis_key, window + 1)
+            
+            return True, None
+            
+        except Exception as e:
+            logger.error(f"Redis rate limit check failed: {e}")
+            return None, None
+    
+    async def get_remaining(
+        self,
+        key: str,
+        requests: int,
+        window: int
+    ) -> int:
+        """获取剩余请求数"""
+        if not self._connected:
+            return -1
+        
+        try:
+            now = time.time()
+            window_start = now - window
+            
+            redis_key = f"ratelimit:{key}"
+            await self._redis.zremrangebyscore(redis_key, 0, window_start)
+            current_count = await self._redis.zcard(redis_key)
+            
+            return max(0, requests - current_count)
+        except Exception as e:
+            logger.error(f"Redis get remaining failed: {e}")
+            return -1
+    
+    async def reset(self, key: str) -> None:
+        """重置限流记录"""
+        if not self._connected:
+            return
+        
+        try:
+            redis_key = f"ratelimit:{key}"
+            await self._redis.delete(redis_key)
+        except Exception as e:
+            logger.error(f"Redis rate limit reset failed: {e}")

@@ -95,10 +95,13 @@ class TestMemoryCache:
         cache.set("key1", "value1")
         cache.clear()
         
-        assert cache.get("key1") is None
+        # 获取stats在get()之前，确保测试clear()重置了统计
         stats = cache.get_stats()
         assert stats["hits"] == 0
         assert stats["misses"] == 0
+        
+        # 然后验证get返回None
+        assert cache.get("key1") is None
 
 
 class TestCacheManager:

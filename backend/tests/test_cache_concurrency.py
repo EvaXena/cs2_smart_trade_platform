@@ -171,14 +171,15 @@ class TestCacheTTL:
         """测试TTL过期"""
         cache = MemoryCache()
         
-        # 写入带短TTL的值
+        # 写入带短TTL的值，使用较长的等待时间确保过期
+        # 注意：由于缓存雪崩保护，TTL会有0.9-1.1倍的随机抖动
         cache.set("expire_key", "expire_value", ttl=1)
         
         # 立即读取应该存在
         assert cache.get("expire_key") == "expire_value"
         
-        # 等待过期
-        await asyncio.sleep(1.5)
+        # 等待足够长的时间确保过期（考虑最大1.1倍抖动）
+        await asyncio.sleep(2)
         
         # 读取应该返回None
         assert cache.get("expire_key") is None
@@ -188,13 +189,13 @@ class TestCacheTTL:
         """测试清理过期缓存"""
         cache = MemoryCache()
         
-        # 写入过期和不过期的数据
+        # 写入过期和不过期的数据，使用较长TTL避免抖动问题
         cache.set("expired_1", "value", ttl=1)
         cache.set("expired_2", "value", ttl=1)
         cache.set("valid", "value", ttl=300)
         
-        # 等待过期
-        await asyncio.sleep(1.5)
+        # 等待足够长的时间确保过期
+        await asyncio.sleep(2)
         
         # 清理过期数据
         cleaned = cache.cleanup_expired()

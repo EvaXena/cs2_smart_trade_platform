@@ -58,7 +58,7 @@ async def get_monitors(
     monitors = result.scalars().all()
     
     return MonitorListResponse(
-        monitors=monitors,
+        items=monitors,
         total=total,
         skip=skip,
         limit=limit

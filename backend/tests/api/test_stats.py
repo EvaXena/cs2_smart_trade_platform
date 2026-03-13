@@ -45,10 +45,19 @@ async def create_test_item(test_db: AsyncSession) -> Item:
     return item
 
 
+import random
+import string
+
+def generate_order_id() -> str:
+    """生成符合规范的订单ID"""
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+    return f"ORD-{suffix}"
+
 async def create_test_order(test_db: AsyncSession, user: User, item: Item, status: str = "completed") -> Order:
     """创建测试订单"""
     from datetime import datetime
     order = Order(
+        order_id=generate_order_id(),
         user_id=user.id,
         item_id=item.id,
         side="buy",

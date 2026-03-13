@@ -9,7 +9,7 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, delete
 from pydantic import BaseModel, ConfigDict
 
 from app.core.database import get_db
@@ -210,6 +210,56 @@ async def mark_as_read(
     db: AsyncSession = Depends(get_db)
 ):
     """标记通知为已读"""
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id
+        )
+    )
+    notification = result.scalar_one_or_none()
+    
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="通知不存在"
+        )
+    
+    notification.is_read = True
+    notification.status = NotificationStatus.READ
+    notification.read_at = datetime.utcnow()
+    
+    await db.commit()
+    await db.refresh(notification)
+    
+    data = None
+    if notification.data:
+        try:
+            data = json.loads(notification.data)
+        except json.JSONDecodeError:
+            pass
+    
+    return NotificationResponse(
+        id=notification.id,
+        user_id=notification.user_id,
+        notification_type=notification.notification_type.value,
+        priority=notification.priority.value,
+        status=notification.status.value,
+        title=notification.title,
+        content=notification.content,
+        data=data,
+        is_read=notification.is_read,
+        created_at=notification.created_at,
+        read_at=notification.read_at
+    )
+
+
+@router.post("/{notification_id}/read", response_model=NotificationResponse)
+async def mark_notification_read(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """标记通知已读"""
     result = await db.execute(
         select(Notification).where(
             Notification.id == notification_id,

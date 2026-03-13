@@ -41,8 +41,9 @@ class TestMemoryCache:
     def test_expired_entry(self):
         """测试过期条目"""
         cache = MemoryCache()
-        cache.set("key1", "value1", ttl=1)
-        time.sleep(1.1)
+        # 使用较长TTL避免雪崩保护抖动导致的测试不稳定
+        cache.set("key1", "value1", ttl=2)
+        time.sleep(2.5)
         assert cache.get("key1") is None
     
     def test_delete(self):
@@ -69,10 +70,11 @@ class TestMemoryCache:
     def test_cleanup_expired(self):
         """测试清理过期条目"""
         cache = MemoryCache()
-        cache.set("key1", "value1", ttl=1)
-        time.sleep(0.5)
-        cache.set("key2", "value2", ttl=1)
-        time.sleep(0.6)
+        # 使用较长TTL避免雪崩保护抖动导致的测试不稳定
+        cache.set("key1", "value1", ttl=2)
+        time.sleep(2.5)
+        cache.set("key2", "value2", ttl=2)
+        time.sleep(2.5)
         cleaned = cache.cleanup_expired()
         assert cleaned >= 1
     

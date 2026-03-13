@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import timedelta
 from typing import Dict, Tuple, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -177,7 +177,7 @@ async def login(
 
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
-    refresh_token: str,
+    refresh_token: str = Query(..., description="Refresh Token"),
     db: AsyncSession = Depends(get_db)
 ):
     """刷新Access Token"""

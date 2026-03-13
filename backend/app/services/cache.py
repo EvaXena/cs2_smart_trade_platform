@@ -123,7 +123,7 @@ class MemoryCache:
     
     特性:
     - 支持 TTL（生存时间）
-    - 线程安全
+    - 线程安全 + 异步安全
     - 自动清理过期条目
     - 支持 LRU 淘汰策略
     - 支持多节点集群（分布式通知）
@@ -132,6 +132,7 @@ class MemoryCache:
     def __init__(self, node_id: str = None, max_size: int = 1000):
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._lock = Lock()
+        self._async_lock = asyncio.Lock()  # 异步锁，用于异步操作
         self._max_size = max_size  # 最大缓存条目数
         # 统计信息
         self._hits = 0
@@ -261,6 +262,48 @@ class MemoryCache:
         """获取所有缓存键"""
         with self._lock:
             return list(self._cache.keys())
+    
+    # ============ 异步安全方法 ============
+    
+    async def aget(self, key: str, default: Any = None) -> Optional[Any]:
+        """异步获取缓存值（线程安全 + 异步安全）"""
+        async with self._async_lock:
+            if key not in self._cache:
+                self._misses += 1
+                return default
+            
+            entry = self._cache[key]
+            if entry.is_expired():
+                del self._cache[key]
+                self._misses += 1
+                return default
+            
+            # 移动到末尾（表示最近使用）
+            self._cache.move_to_end(key)
+            self._hits += 1
+            return entry.value
+    
+    async def aset(self, key: str, value: Any, ttl: int = 300) -> None:
+        """异步设置缓存值（线程安全 + 异步安全）"""
+        async with self._async_lock:
+            # 如果key已存在，先删除（更新位置）
+            if key in self._cache:
+                del self._cache[key]
+            
+            # 检查是否需要淘汰
+            self._evict_if_needed()
+            
+            self._cache[key] = CacheEntry(value, ttl)
+            # 移动到末尾（最新）
+            self._cache.move_to_end(key)
+    
+    async def adelete(self, key: str) -> bool:
+        """异步删除缓存（线程安全 + 异步安全）"""
+        async with self._async_lock:
+            if key in self._cache:
+                del self._cache[key]
+                return True
+            return False
 
 
 class RedisCache:
@@ -640,6 +683,8 @@ class CacheManager:
             max_retries: 最大重试次数
             retry_delay: 重试延迟（秒），支持指数退避
         """
+        connected = False
+        
         if self._backend == CacheBackend.REDIS:
             last_error = None
             
@@ -664,10 +709,10 @@ class CacheManager:
                     logger.info(f"Retrying in {delay}s...")
                     await asyncio.sleep(delay)
             
-            # 所有重试都失败
-            if self._current_backend != CacheBackend.REDIS:
-                logger.warning(f"Redis connection failed after {max_retries} attempts, falling back to memory cache")
+            # 所有重试都失败，回退到内存缓存
+            if not connected:
                 if self._fallback_to_memory:
+                    logger.warning(f"Redis connection failed after {max_retries} attempts, falling back to memory cache")
                     self._current_backend = CacheBackend.MEMORY
                 else:
                     raise RuntimeError(f"Failed to connect to Redis after {max_retries} attempts and fallback is disabled")
@@ -1080,15 +1125,19 @@ def get_cache() -> CacheManager:
         # 创建实例后自动调用 initialize()
         import asyncio
         try:
+            # 尝试获取现有事件循环
+            loop = asyncio.get_running_loop()
+            # 在异步环境中，使用 create_task 后台执行
+            asyncio.create_task(_cache.initialize())
+        except RuntimeError:
+            # 没有运行中的事件循环，创建一个新的
             try:
-                loop = asyncio.get_running_loop()
-                # 在异步环境中，使用 create_task 后台执行
-                asyncio.create_task(_cache.initialize())
-            except RuntimeError:
-                # 没有运行中的事件循环
-                asyncio.run(_cache.initialize())
-        except Exception as e:
-            logger.warning(f"Cache auto-initialize failed: {e}")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_cache.initialize())
+                loop.close()
+            except Exception as e:
+                logger.warning(f"Cache auto-initialize failed: {e}")
     
     return _cache
 

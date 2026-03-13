@@ -25,13 +25,8 @@ os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing-only"
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="function")
-def event_loop():
-    """创建事件循环 - 使用 pytest-asyncio 的默认事件循环"""
-    import asyncio
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# 移除自定义 event_loop fixture，使用 pytest-asyncio 的默认行为
+# 旧代码会导致与 pytest-asyncio 的兼容性问题
 
 
 @pytest.fixture(scope="function")
@@ -63,8 +58,41 @@ def mock_redis():
 
 
 @pytest.fixture(autouse=True)
-def patch_redis(mock_redis):
+def reset_global_cache():
+    """重置全局缓存实例，防止测试间状态污染"""
+    import app.services.cache as cache_module
+    
+    # 保存原始值
+    original_cache = cache_module._cache
+    original_initialized = cache_module._cache_initialized
+    
+    # 重置全局缓存
+    cache_module._cache = None
+    cache_module._cache_initialized = False
+    
+    yield
+    
+    # 清理 - 只在需要时清理
+    try:
+        if cache_module._cache is not None:
+            # 尝试调用清理方法
+            cache_module._cache._cache.clear()
+    except Exception:
+        pass
+    
+    # 恢复原始值
+    cache_module._cache = original_cache
+    cache_module._cache_initialized = original_initialized
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def patch_redis(mock_redis):
     """自动 mock 所有 Redis 连接"""
+    # 重置 RedisManager 单例状态
+    from app.core import redis_manager as redis_mgr_module
+    if hasattr(redis_mgr_module, 'redis_manager'):
+        redis_mgr_module.redis_manager._redis_client = None
+    
     async def mock_get_redis():
         return mock_redis
     
@@ -74,7 +102,8 @@ def patch_redis(mock_redis):
             with patch('app.core.redis_manager.redis', mock_redis):
                 with patch('app.core.session_manager.redis', mock_redis):
                     with patch('app.core.redis_manager.get_redis', mock_get_redis):
-                        yield mock_redis
+                        with patch('app.core.redis_manager.redis_manager.get_client', AsyncMock(return_value=mock_redis)):
+                            yield mock_redis
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -119,3 +148,34 @@ async def client(test_db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield ac
     
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def auth_token(client: AsyncClient) -> str:
+    """获取授权令牌 - 供需要认证的测试使用"""
+    import random
+    
+    # 注册用户
+    username = f"testuser_{random.randint(1000, 9999)}"
+    
+    await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": username,
+            "password": "Testpass123",
+            "email": f"{username}@example.com"
+        }
+    )
+    
+    # 登录
+    response = await client.post(
+        "/api/v1/auth/login",
+        data={
+            "username": username,
+            "password": "Testpass123"
+        }
+    )
+    
+    if response.status_code == 200:
+        return response.json()["access_token"]
+    return None
