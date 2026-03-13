@@ -67,6 +67,115 @@ async def get_monitors_summary(
     }
 
 
+@router.post("/toggle-all")
+async def toggle_all_monitors(
+    enabled: bool = Query(..., description="启用或停用所有监控"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """批量启用/停用所有监控任务 v2"""
+    result = await db.execute(
+        select(MonitorTask).where(MonitorTask.user_id == current_user.id)
+    )
+    monitors = result.scalars().all()
+    
+    updated_count = 0
+    for monitor in monitors:
+        monitor.enabled = enabled
+        monitor.status = 'running' if enabled else 'stopped'
+        updated_count += 1
+    
+    await db.commit()
+    
+    return {
+        "success": True,
+        "updated": updated_count,
+        "enabled": enabled
+    }
+
+
+@router.get("/alerts")
+async def get_monitor_alerts(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取监控告警列表 v2"""
+    # 获取所有触发过的监控任务的日志
+    query = select(MonitorLog, MonitorTask).join(
+        MonitorTask, MonitorLog.task_id == MonitorTask.id
+    ).where(
+        MonitorTask.user_id == current_user.id,
+        MonitorLog.trigger_type == 'triggered'
+    )
+    
+    # 获取总数
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+    
+    # 分页
+    query = query.offset(skip).limit(limit).order_by(MonitorLog.created_at.desc())
+    result = await db.execute(query)
+    logs = result.all()
+    
+    alerts = []
+    for log, task in logs:
+        alerts.append({
+            "id": log.id,
+            "monitor_name": task.name,
+            "message": log.message,
+            "trigger_type": log.trigger_type,
+            "created_at": log.created_at.isoformat() if log.created_at else None
+        })
+    
+    return {
+        "alerts": alerts,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/export")
+async def export_monitors(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """导出监控任务 v2"""
+    result = await db.execute(
+        select(MonitorTask).where(MonitorTask.user_id == current_user.id)
+    )
+    monitors = result.scalars().all()
+    
+    if format == "json":
+        return {
+            "monitors": [
+                {
+                    "id": m.id,
+                    "name": m.name,
+                    "condition_type": m.condition_type,
+                    "threshold": float(m.threshold) if m.threshold else None,
+                    "enabled": m.enabled,
+                    "status": m.status
+                }
+                for m in monitors
+            ]
+        }
+    else:
+        # CSV 格式
+        csv_lines = ["id,name,condition_type,threshold,enabled,status"]
+        for m in monitors:
+            csv_lines.append(
+                f"{m.id},{m.name},{m.condition_type},{m.threshold},{m.enabled},{m.status}"
+            )
+        return "\n".join(csv_lines)
+
+
+# ========== 路由顺序调整结束 ==========
+
 @router.get("/", response_model=MonitorListResponse)
 async def get_monitors(
     skip: int = Query(0, ge=0),

@@ -29,12 +29,12 @@ class ItemV2(BaseModel):
     market_hash_name: str
     rarity: Optional[str] = None
     exterior: Optional[str] = None
-    type: Optional[str] = None
+    category: Optional[str] = None
     image_url: Optional[str] = None
     current_price: Optional[float] = None
     lowest_price: Optional[float] = None
     highest_price: Optional[float] = None
-    recent_sales: int = 0
+    volume_24h: int = 0
 
 
 class ItemsListResponseV2(BaseModel):
@@ -69,7 +69,7 @@ async def get_items_v2(
     search: Optional[str] = None,
     rarity: Optional[str] = None,
     exterior: Optional[str] = None,
-    sort_by: str = Query("id", pattern="^(id|name|price|recent_sales)$"),
+    sort_by: str = Query("id", pattern="^(id|name|price|volume_24h)$"),
     sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -124,12 +124,12 @@ async def get_items_v2(
             market_hash_name=item.market_hash_name or "",
             rarity=item.rarity,
             exterior=item.exterior,
-            type=item.type,
+            category=item.category,
             image_url=item.image_url,
             current_price=float(item.current_price) if item.current_price else None,
             lowest_price=float(item.lowest_price) if item.lowest_price else None,
             highest_price=float(item.highest_price) if item.highest_price else None,
-            recent_sales=item.recent_sales or 0,
+            recent_sales=item.volume_24h or 0,
         ) for item in items],
         total=total,
         page=page,
