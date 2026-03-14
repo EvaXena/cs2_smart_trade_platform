@@ -23,6 +23,21 @@ from app.core.session_manager import (
     close_session_manager,
 )
 
+# 导出风险管理器
+from app.core.risk_manager import (
+    RiskManager,
+    RiskLevel,
+    RiskEventType,
+    RiskRule,
+    RiskEvent,
+    get_risk_manager,
+    # 风险检查器
+    RiskCheckerBase,
+    PriceDeviationChecker,
+    WashTradeChecker,
+    HighFrequencyChecker,
+)
+
 __all__ = [
     # Config
     "settings",
@@ -48,4 +63,16 @@ __all__ = [
     "SessionManager",
     "get_session_manager",
     "close_session_manager",
+    # Risk Manager
+    "RiskManager",
+    "RiskLevel",
+    "RiskEventType",
+    "RiskRule",
+    "RiskEvent",
+    "get_risk_manager",
+    # Risk Checkers
+    "RiskCheckerBase",
+    "PriceDeviationChecker",
+    "WashTradeChecker",
+    "HighFrequencyChecker",
 ]
