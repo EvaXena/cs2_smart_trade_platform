@@ -1422,32 +1422,42 @@ async def aget(key: str, default: Any = None) -> Any:
 
 def get(key: str, default: Any = None) -> Any:
     """获取缓存值"""
+    # 规范化键
+    normalized_key = normalize_cache_key(key)
     cache = get_cache()
-    return cache.get(key, default)
+    return cache.get(normalized_key, default)
 
 
 def set(key: str, value: Any, ttl: int = 300) -> None:
     """设置缓存值"""
+    # 规范化键
+    normalized_key = normalize_cache_key(key)
     cache = get_cache()
-    cache.set(key, value, ttl)
+    cache.set(normalized_key, value, ttl)
 
 
 async def aset(key: str, value: Any, ttl: int = 300) -> None:
     """异步设置缓存值"""
+    # 规范化键
+    normalized_key = normalize_cache_key(key)
     cache = get_cache()
-    await cache.aset(key, value, ttl)
+    await cache.aset(normalized_key, value, ttl)
 
 
 def delete(key: str) -> bool:
     """删除缓存"""
+    # 规范化键
+    normalized_key = normalize_cache_key(key)
     cache = get_cache()
-    return cache.delete(key)
+    return cache.delete(normalized_key)
 
 
 async def adelete(key: str) -> bool:
     """异步删除缓存"""
+    # 规范化键
+    normalized_key = normalize_cache_key(key)
     cache = get_cache()
-    return await cache.adelete(key)
+    return await cache.adelete(normalized_key)
 
 
 def clear() -> None:
@@ -1466,6 +1476,61 @@ def get_stats() -> Dict[str, Any]:
     """获取缓存统计"""
     cache = get_cache()
     return cache.get_stats()
+
+
+# ============ 缓存键规范化 ============
+
+# 缓存键前缀
+CACHE_KEY_PREFIX = "cs2:"
+
+# 缓存键正则（只允许字母、数字、下划线和冒号）
+import re
+_CACHE_KEY_PATTERN = re.compile(r'^[a-zA-Z0-9_:]+$')
+
+
+def normalize_cache_key(key: str) -> str:
+    """
+    规范化缓存键
+    
+    - 添加前缀以避免键冲突
+    - 验证键格式
+    
+    Args:
+        key: 原始缓存键
+        
+    Returns:
+        规范化后的缓存键
+        
+    Raises:
+        ValueError: 键格式不正确
+    """
+    if not key:
+        raise ValueError("Cache key cannot be empty")
+    
+    # 验证键格式
+    if not _CACHE_KEY_PATTERN.match(key):
+        raise ValueError(f"Invalid cache key format: {key}")
+    
+    # 如果没有前缀，添加前缀
+    if not key.startswith(CACHE_KEY_PREFIX):
+        return f"{CACHE_KEY_PREFIX}{key}"
+    
+    return key
+
+
+def validate_cache_key(key: str) -> bool:
+    """
+    验证缓存键是否有效
+    
+    Args:
+        key: 缓存键
+        
+    Returns:
+        是否有效
+    """
+    if not key:
+        return False
+    return _CACHE_KEY_PATTERN.match(key) is not None
 
 
 # ============ 特定用途的缓存函数 ============

@@ -116,8 +116,8 @@ async def get_notifications(
         if n.data:
             try:
                 data = json.loads(n.data)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse notification data: {e}")
         
         notification_list.append(NotificationResponse(
             id=n.id,
@@ -185,8 +185,8 @@ async def get_notification(
     if notification.data:
         try:
             data = json.loads(notification.data)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse notification data for notification {notification_id}: {e}")
     
     return NotificationResponse(
         id=notification.id,
@@ -235,8 +235,8 @@ async def mark_as_read(
     if notification.data:
         try:
             data = json.loads(notification.data)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse notification data in mark_as_read (PUT): {e}")
     
     return NotificationResponse(
         id=notification.id,
@@ -285,8 +285,8 @@ async def mark_notification_read(
     if notification.data:
         try:
             data = json.loads(notification.data)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse notification data in mark_notification_read (POST): {e}")
     
     return NotificationResponse(
         id=notification.id,

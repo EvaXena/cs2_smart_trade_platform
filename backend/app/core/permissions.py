@@ -183,8 +183,8 @@ class ResourcePermissionChecker:
         # 转换为 int (数据库返回的可能是字符串)
         try:
             owner_id = int(owner_id)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Failed to convert owner_id to int: {e}")
         
         # 所有者检查
         if owner_id == current_user_id:
@@ -212,8 +212,8 @@ class ResourcePermissionChecker:
                     buyer_id = int(buyer_id)
                     if buyer_id == current_user_id:
                         return True
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Failed to convert buyer_id to int: {e}")
         
         # 无权访问
         logger.warning(

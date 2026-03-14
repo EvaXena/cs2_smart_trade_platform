@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Dict, Optional, Tuple
 import time
 import logging
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -31,12 +32,26 @@ class RateLimiter:
         self.user_limit = settings.RATE_LIMIT_DEFAULT_REQUESTS * 2  # 用户每分钟最大请求数
         self.user_window = settings.RATE_LIMIT_DEFAULT_WINDOW      # 用户时间窗口(秒)
         
-        # 清理间隔
+        # 清理间隔 - 从配置读取
+        from app.core.config import settings
         self.last_cleanup = time.time()
-        self.cleanup_interval = 300  # 5分钟清理一次
+        self.cleanup_interval = settings.CACHE_CLEANUP_INTERVAL  # 从配置读取
+        
+        # 异步锁，保护清理操作
+        self._cleanup_lock = asyncio.Lock()
     
     def _cleanup_old_requests(self):
-        """清理过期的请求记录"""
+        """清理过期的请求记录（非线程安全版本，供同步调用使用）"""
+        # 直接执行清理，不加锁（供 check_rate_limit 同步调用）
+        self._cleanup_old_requests_unlocked()
+    
+    async def _cleanup_old_requests_async(self):
+        """清理过期的请求记录（异步版本，带锁保护）"""
+        async with self._cleanup_lock:
+            self._cleanup_old_requests_unlocked()
+    
+    def _cleanup_old_requests_unlocked(self):
+        """清理过期的请求记录（内部方法，不加锁）"""
         current_time = time.time()
         
         if current_time - self.last_cleanup < self.cleanup_interval:
@@ -61,6 +76,7 @@ class RateLimiter:
                 del self.user_requests[user_id]
         
         self.last_cleanup = current_time
+        logger.debug("Rate limiter cleanup completed")
     
     def _get_client_ip(self, request: Request) -> str:
         """获取客户端IP"""
@@ -89,7 +105,8 @@ class RateLimiter:
         检查限流
         返回: (是否允许, 限流信息)
         """
-        self._cleanup_old_requests()
+        # 使用异步锁保护的清理方法
+        await self._cleanup_old_requests_async()
         
         current_time = time.time()
         client_ip = self._get_client_ip(request)

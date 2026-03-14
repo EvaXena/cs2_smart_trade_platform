@@ -5,7 +5,7 @@ WebSocket API 端点
 增强版：支持JWT认证、自动重连、心跳检测
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import json
 import logging
 from datetime import datetime
@@ -25,7 +25,7 @@ router = APIRouter()
 
 class TokenExpiredError(Exception):
     """Token过期异常"""
-    pass
+    pass  # 异常类定义，无需操作
 
 
 class WebSocketAuthManager:
@@ -67,9 +67,35 @@ class WebSocketAuthManager:
             exp = payload.get("exp")
             if exp:
                 return datetime.fromtimestamp(exp)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to get token expiry: {e}")
         return None
+    
+    @staticmethod
+    def is_token_valid_for_reconnect(token: str) -> Tuple[bool, Optional[str]]:
+        """
+        检查 Token 是否有效用于重连
+        返回: (是否有效, 错误信息)
+        """
+        if not token:
+            return False, "No token provided"
+        
+        # 首先检查 token 是否已过期
+        payload = WebSocketAuthManager.validate_token(token)
+        if payload is None:
+            # Token 无效或已过期
+            return False, "Token expired or invalid"
+        
+        # 检查 token 临近过期（5分钟内）
+        expiry = WebSocketAuthManager.get_token_expiry(token)
+        if expiry:
+            time_until_expiry = (expiry - datetime.utcnow()).total_seconds()
+            if time_until_expiry <= 0:
+                return False, "Token has expired"
+            elif time_until_expiry < 300:  # 5分钟
+                return False, f"Token expiring soon ({int(time_until_expiry)}s remaining)"
+        
+        return True, None
     
     @staticmethod
     async def handle_token_refresh(websocket: WebSocket, old_token: str) -> Optional[str]:
@@ -93,9 +119,24 @@ class WebSocketAuthManager:
 class ConnectionManager:
     """WebSocket连接管理器"""
     
-    # 心跳配置
-    HEARTBEAT_INTERVAL = 30  # 心跳间隔(秒)
-    HEARTBEAT_TIMEOUT = 10   # 心跳超时(秒)
+    # 心跳配置 - 从配置文件读取
+    _config = None
+    
+    @classmethod
+    def get_heartbeat_interval(cls) -> int:
+        """获取心跳间隔，从配置读取"""
+        if cls._config is None:
+            from app.core.config import settings
+            cls._config = settings
+        return cls._config.WS_HEARTBEAT_INTERVAL
+    
+    @classmethod
+    def get_heartbeat_timeout(cls) -> int:
+        """获取心跳超时，从配置读取"""
+        if cls._config is None:
+            from app.core.config import settings
+            cls._config = settings
+        return cls._config.WS_HEARTBEAT_TIMEOUT
     
     @staticmethod
     async def keep_alive(websocket: WebSocket, user_id: int):
@@ -108,7 +149,7 @@ class ConnectionManager:
                 })
                 
                 try:
-                    data = await asyncio.wait_for(websocket.receive_json(), timeout=ConnectionManager.HEARTBEAT_TIMEOUT)
+                    data = await asyncio.wait_for(websocket.receive_json(), timeout=ConnectionManager.get_heartbeat_timeout())
                     if data.get("type") == "pong":
                         # 收到有效的pong响应，重置心跳计时器
                         logger.debug(f"Received pong from user {user_id}")
@@ -123,8 +164,8 @@ class ConnectionManager:
                     # 尝试发送关闭消息
                     try:
                         await websocket.close(code=4002, reason="Heartbeat timeout")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to send close message during heartbeat timeout: {e}")
                     break
         except Exception as e:
             logger.error(f"Keep-alive error for user {user_id}: {e}")
@@ -342,8 +383,8 @@ async def websocket_endpoint(
                         })
                 except WebSocketDisconnect:
                     break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Error processing anonymous WebSocket message: {e}")
                     
         except Exception as e:
             logger.error(f"Anonymous WebSocket error: {e}")
@@ -407,8 +448,8 @@ async def websocket_notifications(
                     
             except WebSocketDisconnect:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error processing notification WebSocket message: {e}")
                 
     except Exception as e:
         logger.error(f"Notification WebSocket error: {e}")

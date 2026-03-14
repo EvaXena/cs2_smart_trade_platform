@@ -67,6 +67,9 @@ class TradingEngine:
         self.notification_service = global_notification_service
         self.notification_type = NotificationType
         self.notification_priority = NotificationPriority
+        # 保存异步任务引用以便后续管理（取消等）
+        self._active_tasks: Dict[str, asyncio.Task] = {}
+        self._tasks_lock = asyncio.Lock()  # 保护 _active_tasks 字典
     
     @classmethod
     async def _get_global_item_lock(cls, item_id: int) -> asyncio.Lock:
@@ -458,13 +461,46 @@ class TradingEngine:
                     do_arbitrage  # 传入协程函数
                 )
             
-            # 异步执行任务
-            await self._task_registry.run(task_id, wait=False)
+            # 异步执行任务，保存任务引用以便后续管理
+            task = asyncio.create_task(self._task_registry.run(task_id, wait=False))
+            async with self._tasks_lock:
+                self._active_tasks[task_id] = task
             
             return ServiceResponse.ok(
                 data={"task_id": task_id, "task_name": task_name},
                 message="搬砖任务已启动"
             )
+    
+    async def cancel_arbitrage_task(self, task_id: str) -> ServiceResponse:
+        """
+        取消正在运行的搬砖任务
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            取消结果
+        """
+        async with self._tasks_lock:
+            task = self._active_tasks.get(task_id)
+            if task:
+                # 取消 asyncio 任务
+                task.cancel()
+                # 从活跃任务中移除
+                del self._active_tasks[task_id]
+                logger.info(f"Task {task_id} cancelled")
+            
+            # 同时更新 TaskRegistry 状态
+            await self._task_registry.cancel_task(task_id, reason="用户取消")
+            
+            return ServiceResponse.ok(
+                message=f"任务 {task_id} 已取消"
+            )
+    
+    async def get_active_tasks(self) -> List[str]:
+        """获取所有活跃任务ID"""
+        async with self._tasks_lock:
+            return list(self._active_tasks.keys())
     
     async def _execute_arbitrage_internal(
         self,
