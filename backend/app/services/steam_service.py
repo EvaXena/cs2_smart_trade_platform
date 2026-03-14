@@ -16,8 +16,13 @@ import aiohttp
 from app.core.config import settings
 from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen, CircuitBreaker
 from app.core.anti_crawler import get_anti_crawler
+# 导入统一超时管理
+from app.core.timeout import TimeoutCategory, get_timeout
 
 logger = logging.getLogger(__name__)
+
+# 使用统一超时配置
+DEFAULT_TIMEOUT_CONFIG = get_timeout(TimeoutCategory.EXTERNAL_SERVICE)
 
 # Steam Market API 配置
 STEAM_MARKET_API_DELAY = 0.5  # 请求间隔（秒），避免触发反爬虫

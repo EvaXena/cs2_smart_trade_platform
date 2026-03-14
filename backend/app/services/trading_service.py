@@ -33,11 +33,13 @@ from app.utils.validators import (
 )
 # 导入 Webhook 服务
 from app.services.webhook_service import webhook_manager, WebhookEventType
+# 导入统一超时管理
+from app.core.timeout import TimeoutCategory, get_timeout
 
 logger = logging.getLogger(__name__)
 
-# 从配置读取超时设置
-DEFAULT_TIMEOUT = settings.TRADING_TIMEOUT  # 秒
+# 使用统一超时配置（优先从timeout模块获取，可被环境变量覆盖）
+DEFAULT_TIMEOUT = get_timeout(TimeoutCategory.TRADING)
 
 
 class TradingEngine:

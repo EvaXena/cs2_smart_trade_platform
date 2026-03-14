@@ -140,4 +140,13 @@ async def with_timeout(coro, category: TimeoutCategory, custom_timeout: Optional
     """带超时的协程执行"""
     import asyncio
     timeout = get_timeout(category, custom_timeout)
-    return await asyncio.wait_for(coro, timeout=timeout)
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        # 超时时应返回 None 或抛出更明确的异常
+        # 此处记录日志后返回 None，由调用方处理
+        import logging
+        logging.getLogger(__name__).warning(
+            f"操作超时 (category={category.value}, timeout={timeout}s)"
+        )
+        return None

@@ -12,7 +12,7 @@ import logging
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='')
 user_id_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar('user_id', default=None)
 trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar('trace_id', default='')
-extra_context_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar('extra_context', default={})
+extra_context_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar('extra_context', default=None)
 
 
 @dataclass
@@ -73,14 +73,16 @@ class LoggingContextManager:
     @staticmethod
     def set_extra(key: str, value: Any) -> None:
         """设置额外上下文"""
-        extra = extra_context_var.get().copy()
+        current = extra_context_var.get()
+        extra = dict(current) if current else {}
         extra[key] = value
         extra_context_var.set(extra)
     
     @staticmethod
     def get_extra() -> Dict[str, Any]:
         """获取额外上下文"""
-        return extra_context_var.get().copy()
+        current = extra_context_var.get()
+        return dict(current) if current else {}
     
     @staticmethod
     def clear() -> None:
@@ -88,7 +90,7 @@ class LoggingContextManager:
         request_id_var.set('')
         user_id_var.set(None)
         trace_id_var.set('')
-        extra_context_var.set({})
+        extra_context_var.set(None)
     
     @staticmethod
     def get_context() -> LogContext:
@@ -97,7 +99,7 @@ class LoggingContextManager:
             request_id=request_id_var.get(),
             user_id=user_id_var.get(),
             trace_id=trace_id_var.get(),
-            extra=extra_context_var.get().copy()
+            extra=LoggingContextManager.get_extra()
         )
     
     @staticmethod
