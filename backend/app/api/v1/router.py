@@ -4,7 +4,7 @@ API 路由
 """
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, items, orders, inventory, monitors, bots, stats, monitoring, market, grid_trading
+from app.api.v1.endpoints import auth, items, orders, inventory, monitors, bots, stats, monitoring, market, grid_trading, mean_reversion
 
 
 api_router = APIRouter()
@@ -20,3 +20,4 @@ api_router.include_router(stats.router, prefix="/stats", tags=["统计"])
 api_router.include_router(monitoring.router, prefix="/monitoring", tags=["监控"])
 api_router.include_router(market.router, prefix="/market", tags=["市场"])
 api_router.include_router(grid_trading.router, tags=["网格交易"])
+api_router.include_router(mean_reversion.router, tags=["均值回归策略"])
