@@ -11,6 +11,7 @@ import statistics
 from typing import List, Dict, Any
 from datetime import datetime
 import sys
+import pytest
 
 
 class StressTestRunner:
@@ -197,6 +198,7 @@ class StressTestRunner:
         print(f"总成功率: {total_success/total_requests*100:.2f}%")
 
 
+@pytest.mark.asyncio
 async def test_circuit_breaker():
     """测试熔断器功能"""
     print("\n🧪 熔断器测试")

@@ -82,6 +82,14 @@ async def lifespan(app: FastAPI):
         cache = get_cache()
         await cache.initialize()
         logger.info("Cache service initialized")
+        
+        # 启动时预热缓存
+        try:
+            await cache.warmup_cache()
+            logger.info("Cache warmup completed")
+        except Exception as e:
+            logger.warning(f"Cache warmup failed: {e}")
+            # 缓存预热失败不影响服务启动
     except Exception as e:
         logger.warning(f"Failed to initialize cache service: {e}")
         _cache_degraded = True

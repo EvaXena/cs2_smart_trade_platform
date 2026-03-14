@@ -466,3 +466,133 @@ async def reset_metrics():
     """重置指标"""
     _metrics.reset()
     return {"message": "指标已重置"}
+
+
+# ============ 熔断器监控端点 ============
+
+@router.get("/circuit-breakers")
+async def get_circuit_breakers_status():
+    """
+    熔断器状态监控端点
+    
+    返回所有熔断器的当前状态和统计信息
+    """
+    from app.core.circuit_breaker import CircuitBreakerDecorator, CircuitState
+    
+    # 获取所有熔断器状态
+    all_breakers = CircuitBreakerDecorator.get_all_stats()
+    
+    # 格式化响应
+    breakers_list = []
+    for name, stats in all_breakers.items():
+        # 转换状态为友好格式
+        state_value = stats.get("state", "closed")
+        if isinstance(state_value, CircuitState):
+            state_value = state_value.value
+        
+        # 计算正常运行时间
+        last_change = stats.get("last_state_change_time", 0)
+        uptime_seconds = time.time() - last_change if last_change else 0
+        
+        breakers_list.append({
+            "name": name,
+            "state": state_value,
+            "failure_count": stats.get("failure_count", 0),
+            "success_count": stats.get("success_count", 0),
+            "half_open_calls": stats.get("half_open_calls", 0),
+            "last_failure_time": stats.get("last_failure_time"),
+            "last_state_change_time": stats.get("last_state_change_time"),
+            "uptime_seconds": uptime_seconds,
+        })
+    
+    # 按状态分组统计
+    state_summary = {
+        "closed": 0,
+        "open": 0,
+        "half_open": 0,
+    }
+    for stats in all_breakers.values():
+        state = stats.get("state", CircuitState.CLOSED)
+        if isinstance(state, CircuitState):
+            state = state.value
+        if state in state_summary:
+            state_summary[state] += 1
+    
+    return {
+        "circuit_breakers": breakers_list,
+        "summary": {
+            "total": len(breakers_list),
+            "by_state": state_summary,
+        },
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@router.get("/circuit-breakers/{breaker_name}")
+async def get_circuit_breaker_status(breaker_name: str):
+    """
+    获取单个熔断器的详细状态
+    
+    参数:
+    - breaker_name: 熔断器名称
+    """
+    from app.core.circuit_breaker import CircuitBreakerDecorator, CircuitState
+    
+    # 获取熔断器
+    breaker = CircuitBreakerDecorator.get_breaker(breaker_name)
+    stats = breaker.get_stats()
+    
+    # 转换状态
+    state_value = stats.get("state", CircuitState.CLOSED)
+    if isinstance(state_value, CircuitState):
+        state_value = state_value.value
+    
+    # 计算详细信息
+    last_change = stats.get("last_state_change_time", 0)
+    uptime_seconds = time.time() - last_change if last_change else 0
+    
+    return {
+        "name": stats.get("name"),
+        "state": state_value,
+        "failure_count": stats.get("failure_count", 0),
+        "success_count": stats.get("success_count", 0),
+        "half_open_calls": stats.get("half_open_calls", 0),
+        "last_failure_time": stats.get("last_failure_time"),
+        "last_state_change_time": stats.get("last_state_change_time"),
+        "uptime_seconds": uptime_seconds,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@router.post("/circuit-breakers/{breaker_name}/reset")
+async def reset_circuit_breaker(breaker_name: str):
+    """
+    重置指定熔断器
+    
+    参数:
+    - breaker_name: 熔断器名称
+    """
+    from app.core.circuit_breaker import CircuitBreakerDecorator
+    
+    # 获取并重置熔断器
+    breaker = CircuitBreakerDecorator.get_breaker(breaker_name)
+    breaker.reset()
+    
+    return {
+        "message": f"熔断器 '{breaker_name}' 已重置",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@router.post("/circuit-breakers/reset-all")
+async def reset_all_circuit_breakers():
+    """重置所有熔断器"""
+    from app.core.circuit_breaker import CircuitBreakerDecorator
+    
+    # 重置所有熔断器
+    CircuitBreakerDecorator.reset_all()
+    
+    return {
+        "message": "所有熔断器已重置",
+        "timestamp": datetime.now().isoformat(),
+    }

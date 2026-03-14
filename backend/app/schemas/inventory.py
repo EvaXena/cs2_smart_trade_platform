@@ -117,8 +117,7 @@ class BatchListingRequest(BaseModel):
     price: Optional[Decimal] = Field(None, decimal_places=2)
     platform: str = "steam"
     
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class BatchUnlistRequest(BaseModel):
