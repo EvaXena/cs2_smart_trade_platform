@@ -19,6 +19,8 @@ class TestTradingEngine:
     def mock_db(self):
         """Mock数据库会话"""
         db = AsyncMock()
+        # db.add 是同步方法，不需要 await
+        db.add = MagicMock()
         return db
     
     @pytest.fixture
@@ -294,7 +296,11 @@ class TestArbitrageCalculation:
     
     @pytest.fixture
     def mock_db(self):
-        return AsyncMock()
+        """Mock数据库会话"""
+        db = AsyncMock()
+        # db.add 是同步方法，不需要 await
+        db.add = MagicMock()
+        return db
     
     @pytest.mark.asyncio
     async def test_profit_calculation(self, mock_db):

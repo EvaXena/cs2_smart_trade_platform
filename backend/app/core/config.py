@@ -94,6 +94,13 @@ class Settings(BaseSettings):
         # 向后兼容：没有 ENVIRONMENT 时使用 DEBUG
         return not self.DEBUG
 
+    # ===== P2: 监控告警配置 =====
+    ERROR_RATE_THRESHOLD: float = Field(default=10.0, description="错误率告警阈值 (百分比)")
+    RESPONSE_TIME_THRESHOLD: float = Field(default=2000.0, description="响应时间告警阈值 (毫秒)")
+    
+    # ===== P2: 交易超时配置 =====
+    TRADING_TIMEOUT: int = Field(default=30, description="交易操作默认超时时间 (秒)")
+    
     # 数据库配置
     DATABASE_URL: str = "sqlite+aiosqlite:///./cs2trade.db"
 

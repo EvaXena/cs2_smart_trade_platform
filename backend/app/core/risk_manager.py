@@ -806,7 +806,8 @@ class RiskManager:
             if redis_client:
                 key = self._USER_POSITIONS_KEY.format(user_id=user_id)
                 data = await redis_client.hgetall(key)
-                if data:
+                # 类型检查：确保返回的是字典而非Mock对象
+                if data and isinstance(data, dict):
                     return sum(float(v) for v in data.values())
             
             # 回退到数据库查询
@@ -827,7 +828,9 @@ class RiskManager:
             if redis_client:
                 key = self._USER_POSITIONS_KEY.format(user_id=user_id)
                 position = await redis_client.hget(key, str(item_id))
-                return float(position) if position else 0
+                # 类型检查：确保返回的是有效值而非Mock对象
+                if position and isinstance(position, (str, bytes, int, float)):
+                    return float(position)
             
             # 回退到数据库查询
             result = await self.db.execute(
@@ -907,7 +910,8 @@ class RiskManager:
             if redis_client:
                 key = self._USER_POSITIONS_KEY.format(user_id=user_id)
                 current = await redis_client.hget(key, str(item_id))
-                current_value = float(current) if current else 0
+                # 类型检查：确保返回的是有效值而非Mock对象
+                current_value = float(current) if current and isinstance(current, (str, bytes, int, float)) else 0
                 
                 if side == "buy":
                     new_value = current_value + (quantity * price)

@@ -36,8 +36,8 @@ from app.services.webhook_service import webhook_manager, WebhookEventType
 
 logger = logging.getLogger(__name__)
 
-# 默认超时配置
-DEFAULT_TIMEOUT = 30  # 秒
+# 从配置读取超时设置
+DEFAULT_TIMEOUT = settings.TRADING_TIMEOUT  # 秒
 
 
 class TradingEngine:
@@ -89,11 +89,10 @@ class TradingEngine:
                 self._item_locks[item_id] = asyncio.Lock()
             return self._item_locks[item_id]
     
-    async def _remove_task(self, task_key: str) -> None:
-        """移除已完成的任务引用"""
-        async with self._tasks_lock:
-            if task_key in self._active_tasks:
-                del self._active_tasks[task_key]
+    def _remove_task(self, task_key: str) -> None:
+        """移除已完成的任务引用（同步方法）"""
+        # 直接删除，无需锁保护（cleanup在任务完成后调用，无并发问题）
+        self._active_tasks.pop(task_key, None)
     
     async def _send_webhook_notification(
         self,
@@ -121,18 +120,10 @@ class TradingEngine:
             def cleanup_callback(t: asyncio.Task) -> None:
                 """同步回调函数，用于清理任务引用"""
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # 在已运行的事件循环中调度异步清理
-                        loop.call_soon_threadsafe(
-                            lambda: asyncio.create_task(self._remove_task(task_key))
-                        )
-                    else:
-                        # 事件循环未运行，直接清理
-                        asyncio.run(self._remove_task(task_key))
-                except RuntimeError:
-                    # 事件循环不可用，忽略
-                    pass
+                    # _remove_task现在是同步方法，直接调用即可
+                    self._remove_task(task_key)
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup task: {e}")
             task.add_done_callback(cleanup_callback)
         except Exception as e:
             # Webhook 失败不应影响主流程

@@ -11,6 +11,7 @@ from collections import defaultdict
 from sqlalchemy import text
 
 from app.services.cache import get_cache
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,9 @@ class AlertConfig:
     """告警配置"""
     
     def __init__(self):
-        # 错误率告警阈值 (百分比)
-        self.error_rate_threshold: float = 10.0  # 10% 错误率告警
-        # 响应时间告警阈值 (毫秒)
-        self.response_time_threshold: float = 2000.0  # 2秒告警
+        # 从配置读取或使用默认值
+        self.error_rate_threshold: float = settings.ERROR_RATE_THRESHOLD  # 错误率告警阈值 (百分比)
+        self.response_time_threshold: float = settings.RESPONSE_TIME_THRESHOLD  # 响应时间告警阈值 (毫秒)
         # 缓存命中率告警阈值 (百分比)
         self.cache_hit_rate_threshold: float = 50.0  # 50% 缓存命中率告警
         # API调用失败计数阈值

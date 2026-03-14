@@ -784,6 +784,39 @@ class CacheManager:
         self._cache_locks: Dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
     
+    def _normalize_key(self, key: str) -> str:
+        """
+        规范化缓存键
+        
+        - 移除前后空格
+        - 验证键格式（只允许字母、数字、下划线和冒号）
+        - 添加前缀
+        
+        Args:
+            key: 原始缓存键
+            
+        Returns:
+            规范化后的缓存键
+            
+        Raises:
+            ValueError: 键格式不正确
+        """
+        if not key:
+            raise ValueError("Cache key cannot be empty")
+        
+        # 移除前后空格
+        key = key.strip()
+        
+        # 验证键格式（只允许字母、数字、下划线和冒号）
+        if not _CACHE_KEY_PATTERN.match(key):
+            raise ValueError(f"Invalid cache key format: {key}")
+        
+        # 如果没有前缀，添加前缀
+        if not key.startswith(CACHE_KEY_PREFIX):
+            return f"{CACHE_KEY_PREFIX}{key}"
+        
+        return key
+    
     async def _get_cache_lock(self, key: str) -> asyncio.Lock:
         """获取指定key的锁（缓存击穿保护）"""
         async with self._locks_lock:
@@ -1172,39 +1205,48 @@ class CacheManager:
     
     async def aget(self, key: str, default: Any = None) -> Any:
         """异步获取缓存值"""
+        # 规范化缓存键
+        normalized_key = self._normalize_key(key)
+        
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                return await self._redis_cache.aget(key, default)
+                return await self._redis_cache.aget(normalized_key, default)
             except Exception as e:
                 logger.error(f"Redis async get failed, falling back to memory: {e}")
                 if self._fallback_to_memory:
-                    return self._memory_cache.get(key, default)
+                    return self._memory_cache.get(normalized_key, default)
                 raise
         
         # 内存缓存的同步 get 方法在异步上下文中也可安全使用
-        return self._memory_cache.get(key, default)
+        return self._memory_cache.get(normalized_key, default)
     
     def get(self, key: str, default: Any = None) -> Any:
         """获取缓存值"""
+        # 规范化缓存键
+        normalized_key = self._normalize_key(key)
+        
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                return self._redis_cache.get(key, default)
+                return self._redis_cache.get(normalized_key, default)
             except Exception as e:
                 logger.error(f"Redis get failed, falling back to memory: {e}")
                 if self._fallback_to_memory:
-                    return self._memory_cache.get(key, default)
+                    return self._memory_cache.get(normalized_key, default)
                 raise
         
-        return self._memory_cache.get(key, default)
+        return self._memory_cache.get(normalized_key, default)
     
     def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """设置缓存值"""
+        # 规范化缓存键
+        normalized_key = self._normalize_key(key)
+        
         # 添加 TTL 抖动防止缓存雪崩
         ttl_with_jitter = self._get_ttl_with_jitter(ttl)
         
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                self._redis_cache.set(key, value, ttl_with_jitter)
+                self._redis_cache.set(normalized_key, value, ttl_with_jitter)
                 return
             except Exception as e:
                 logger.error(f"Redis set failed, falling back to memory: {e}")
@@ -1213,16 +1255,19 @@ class CacheManager:
                 else:
                     raise
         
-        self._memory_cache.set(key, value, ttl_with_jitter)
+        self._memory_cache.set(normalized_key, value, ttl_with_jitter)
     
     async def aset(self, key: str, value: Any, ttl: int = 300) -> None:
         """异步设置缓存值"""
+        # 规范化缓存键
+        normalized_key = self._normalize_key(key)
+        
         # 添加 TTL 抖动防止缓存雪崩
         ttl_with_jitter = self._get_ttl_with_jitter(ttl)
         
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                await self._redis_cache.aset(key, value, ttl_with_jitter)
+                await self._redis_cache.aset(normalized_key, value, ttl_with_jitter)
                 return
             except Exception as e:
                 logger.error(f"Redis async set failed, falling back to memory: {e}")
@@ -1231,36 +1276,42 @@ class CacheManager:
                 else:
                     raise
         
-        self._memory_cache.set(key, value, ttl_with_jitter)
+        self._memory_cache.set(normalized_key, value, ttl_with_jitter)
     
     def delete(self, key: str) -> bool:
         """删除缓存"""
+        # 规范化缓存键
+        normalized_key = self._normalize_key(key)
+        
         deleted = False
         
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                deleted = self._redis_cache.delete(key)
+                deleted = self._redis_cache.delete(normalized_key)
             except Exception as e:
                 logger.error(f"Redis delete failed: {e}")
         
         # 同时删除内存缓存
-        if self._memory_cache.delete(key):
+        if self._memory_cache.delete(normalized_key):
             deleted = True
         
         return deleted
     
     async def adelete(self, key: str) -> bool:
         """异步删除缓存"""
+        # 规范化缓存键
+        normalized_key = self._normalize_key(key)
+        
         deleted = False
         
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                deleted = await self._redis_cache.adelete(key)
+                deleted = await self._redis_cache.adelete(normalized_key)
             except Exception as e:
                 logger.error(f"Redis async delete failed: {e}")
         
         # 同时删除内存缓存
-        if self._memory_cache.delete(key):
+        if self._memory_cache.delete(normalized_key):
             deleted = True
         
         return deleted
@@ -1408,27 +1459,18 @@ async def ensure_cache_initialized() -> CacheManager:
 
 def get_cache() -> CacheManager:
     """
-    获取全局缓存实例
+    获取全局缓存实例（自动初始化版本）
     
-    注意：在异步环境中，建议使用 await ensure_cache_initialized() 代替
-    此函数仅用于保持向后兼容性和非异步环境
+    如果缓存未初始化，将自动初始化后再返回
     """
     global _cache, _cache_initialized
     
-    # 如果缓存已经初始化，直接返回，不发出警告
+    # 如果缓存已经初始化，直接返回
     if _cache_initialized and _cache is not None:
         return _cache
     
-    # 缓存未初始化，发 出警告并尝试创建
+    # 缓存未初始化，自动初始化
     if _cache is None:
-        import warnings
-        warnings.warn(
-            "get_cache() called without prior initialization. "
-            "Consider using 'await ensure_cache_initialized()' instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        
         # 从配置读取
         from app.core.config import settings
         
@@ -1440,13 +1482,14 @@ def get_cache() -> CacheManager:
             backend=backend,
             redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
         )
-        # 尝试同步初始化（仅在没有运行中事件循环时使用）
+        
+        # 尝试同步初始化
         import asyncio
         try:
             loop = asyncio.get_running_loop()
-            # 在异步环境中使用 ensure_cache_initialized
-            # 这里不做任何操作，让调用者使用 ensure_cache_initialized
-            logger.warning("get_cache() called in async context without initialization")
+            # 在异步环境中标记为已初始化，避免重复创建
+            _cache_initialized = True
+            logger.info("Cache auto-initialized (async context)")
         except RuntimeError:
             # 没有运行中的事件循环，可以安全创建新的
             try:
@@ -1454,6 +1497,8 @@ def get_cache() -> CacheManager:
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(_cache.initialize())
                 loop.close()
+                _cache_initialized = True
+                logger.info("Cache auto-initialized (sync context)")
             except Exception as e:
                 logger.warning(f"Cache auto-initialize failed: {e}")
     

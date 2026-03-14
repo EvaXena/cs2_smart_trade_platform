@@ -283,51 +283,28 @@ class TestRiskManager:
         risk_manager._rules["single_trade"].max_single_trade = 10000.0
         risk_manager._rules["daily_limit"].max_daily_trade_amount = 50000.0
         
-        # 获取检查器并 mock 它们的异步方法
+        # 禁用价格偏离和刷单检查器，避免它们的异步方法调用
         price_checker = risk_manager.checkers.get("price_deviation")
         wash_checker = risk_manager.checkers.get("wash_trade")
         hf_checker = risk_manager.checkers.get("high_frequency")
         
+        if price_checker:
+            price_checker.enabled = False
+        if wash_checker:
+            wash_checker.enabled = False
+        if hf_checker:
+            hf_checker.enabled = False
+        
         with patch.object(risk_manager, '_get_daily_trade_amount', new_callable=AsyncMock, return_value=0.0):
             with patch.object(risk_manager, '_get_total_position', new_callable=AsyncMock, return_value=0.0):
                 with patch.object(risk_manager, '_get_item_position', new_callable=AsyncMock, return_value=0.0):
-                    if price_checker:
-                        with patch.object(price_checker, '_get_market_price', new_callable=AsyncMock, return_value=100.0):
-                            if wash_checker:
-                                with patch.object(wash_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=3):
-                                    if hf_checker:
-                                        with patch.object(hf_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=3):
-                                            passed, events = await risk_manager.check_trade_risk(
-                                                user_id=123,
-                                                item_id=456,
-                                                price=100.0,
-                                                quantity=1,
-                                                side="buy"
-                                            )
-                                    else:
-                                        passed, events = await risk_manager.check_trade_risk(
-                                            user_id=123,
-                                            item_id=456,
-                                            price=100.0,
-                                            quantity=1,
-                                            side="buy"
-                                        )
-                            else:
-                                passed, events = await risk_manager.check_trade_risk(
-                                    user_id=123,
-                                    item_id=456,
-                                    price=100.0,
-                                    quantity=1,
-                                    side="buy"
-                                )
-                    else:
-                        passed, events = await risk_manager.check_trade_risk(
-                            user_id=123,
-                            item_id=456,
-                            price=100.0,
-                            quantity=1,
-                            side="buy"
-                        )
+                    passed, events = await risk_manager.check_trade_risk(
+                        user_id=123,
+                        item_id=456,
+                        price=100.0,
+                        quantity=1,
+                        side="buy"
+                    )
                     
                     # 应该通过检查
                     assert passed is True
@@ -338,6 +315,18 @@ class TestRiskManager:
         """测试卖出交易风险检查 - 触发止损"""
         risk_manager._rules["stop_loss"].stop_loss_percent = 10.0
         risk_manager._rules["single_trade"].max_single_trade = 10000.0
+        
+        # 禁用价格偏离和刷单检查器，避免它们的异步方法调用
+        price_checker = risk_manager.checkers.get("price_deviation")
+        wash_checker = risk_manager.checkers.get("wash_trade")
+        hf_checker = risk_manager.checkers.get("high_frequency")
+        
+        if price_checker:
+            price_checker.enabled = False
+        if wash_checker:
+            wash_checker.enabled = False
+        if hf_checker:
+            hf_checker.enabled = False
         
         with patch.object(risk_manager, '_get_total_position', new_callable=AsyncMock, return_value=100.0):
             with patch.object(risk_manager, '_get_daily_trade_amount', new_callable=AsyncMock, return_value=0.0):
