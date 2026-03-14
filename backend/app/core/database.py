@@ -14,6 +14,9 @@ from app.core.config import settings
 # 判断是否为 SQLite 数据库
 is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 
+# 获取连接池配置
+pool_config = settings.db_pool_config
+
 if is_sqlite:
     # SQLite 配置优化
     # 确保URL是aiosqlite格式
@@ -23,15 +26,16 @@ if is_sqlite:
         db_url = settings.DATABASE_URL
     
     # 使用 AsyncAdaptedQueuePool 替代 StaticPool，支持连接池
+    # ===== P2-B4: 使用可配置的连接池设置 =====
     engine = create_async_engine(
         db_url,
         echo=settings.DEBUG,
         connect_args={"check_same_thread": False},
         poolclass=AsyncAdaptedQueuePool,
-        pool_size=5,           # 池大小
-        max_overflow=10,       # 最大溢出连接数
-        pool_pre_ping=True,    # 连接前测试
-        pool_recycle=3600,     # 连接回收时间（秒）
+        pool_size=pool_config.get("pool_size", 5),
+        max_overflow=pool_config.get("max_overflow", 10),
+        pool_pre_ping=pool_config.get("pool_pre_ping", True),
+        pool_recycle=pool_config.get("pool_recycle", 3600),
     )
     
     # 配置 SQLite WAL 模式和 busy_timeout
@@ -75,14 +79,15 @@ if is_sqlite:
         configure_sqlite_sync()
 else:
     # PostgreSQL/MySQL 配置
+    # ===== P2-B4: 使用可配置的连接池设置 =====
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=settings.DEBUG,
-        pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
-        pool_recycle=3600,
-        pool_timeout=30,
+        pool_pre_ping=pool_config.get("pool_pre_ping", True),
+        pool_size=pool_config.get("pool_size", 10),
+        max_overflow=pool_config.get("max_overflow", 20),
+        pool_recycle=pool_config.get("pool_recycle", 3600),
+        pool_timeout=pool_config.get("pool_timeout", 30),
     )
 
 # 创建会话工厂

@@ -428,8 +428,8 @@ class TestSteamAPIErrorHandling:
         """测试默认超时配置"""
         api = SteamAPI()
 
-        assert api.DEFAULT_TIMEOUT.total == 30
-        assert api.DEFAULT_TIMEOUT.connect == 10
+        assert api.DEFAULT_TIMEOUT.total == 10
+        assert api.DEFAULT_TIMEOUT.connect == 5
 
         await api.close()
 

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -19,6 +20,8 @@ from app.services.steam_market import get_steam_market_service
 from app.core.config import settings
 from app.core.response import ServiceResponse, success_response, error_response
 from app.core.task_registry import get_task_registry
+# 导入 RiskManager
+from app.core.risk_manager import RiskManager, get_risk_manager
 # 导入 validators 中的验证函数
 from app.utils.validators import (
     validate_price,
@@ -28,6 +31,8 @@ from app.utils.validators import (
     validate_min_profit,
     validate_limit,
 )
+# 导入 Webhook 服务
+from app.services.webhook_service import webhook_manager, WebhookEventType
 
 logger = logging.getLogger(__name__)
 
@@ -38,31 +43,125 @@ DEFAULT_TIMEOUT = 30  # 秒
 class TradingEngine:
     """交易引擎"""
     
+    # 类级别的全局锁字典，用于高频交易场景下的竞态条件保护
+    _global_item_locks: Dict[int, asyncio.Lock] = {}
+    _global_locks_lock: asyncio.Lock = None  # 锁的锁，用于创建新锁
+    
     def __init__(self, db: AsyncSession):
         self.db = db
         self.buff_client = None
         self.steam_api = get_steam_api()
         self.steam_market = get_steam_market_service()
         self._task_registry = get_task_registry()
-        # 并发控制锁 - 保护 execute_arbitrage 方法
-        self._arbitrage_lock = asyncio.Lock()
+        # 初始化风险管理器
+        self.risk_manager = RiskManager(db)
+        # 并发控制 - 细粒度锁+信号量
+        # 使用字典存储每个item_id的锁，实现不同交易对并行
+        self._item_locks: Dict[int, asyncio.Lock] = {}
+        self._item_locks_lock: asyncio.Lock = asyncio.Lock()  # 保护 _item_locks 字典
+        # 使用信号量控制最大并发数
+        self._max_concurrent = 5  # 最多5个并发任务
+        self._semaphore = asyncio.Semaphore(self._max_concurrent)
         # 导入通知服务（使用全局单例）
         from app.services.notification_service import notification_service as global_notification_service, NotificationType, NotificationPriority
         self.notification_service = global_notification_service
         self.notification_type = NotificationType
         self.notification_priority = NotificationPriority
     
+    @classmethod
+    async def _get_global_item_lock(cls, item_id: int) -> asyncio.Lock:
+        """获取全局的 item 锁（类级别，用于高频交易场景）"""
+        if cls._global_locks_lock is None:
+            cls._global_locks_lock = asyncio.Lock()
+        
+        async with cls._global_locks_lock:
+            if item_id not in cls._global_item_locks:
+                cls._global_item_locks[item_id] = asyncio.Lock()
+            return cls._global_item_locks[item_id]
+    
+    async def _get_item_lock(self, item_id: int) -> asyncio.Lock:
+        """获取指定 item_id 的锁"""
+        async with self._item_locks_lock:
+            if item_id not in self._item_locks:
+                self._item_locks[item_id] = asyncio.Lock()
+            return self._item_locks[item_id]
+    
+    async def _send_webhook_notification(
+        self,
+        event_type: WebhookEventType,
+        order_id: str,
+        user_id: int,
+        data: Dict[str, Any]
+    ) -> None:
+        """发送 Webhook 通知（异步，不阻塞主流程）"""
+        try:
+            # 异步发送，不等待结果
+            asyncio.create_task(
+                webhook_manager.send_webhook(
+                    event_type=event_type,
+                    data=data,
+                    user_id=user_id,
+                    order_id=order_id
+                )
+            )
+        except Exception as e:
+            # Webhook 失败不应影响主流程
+            logger.warning(f"Failed to send webhook notification: {e}")
+    
     def set_buff_client(self, cookie: str):
         """设置 BUFF 客户端"""
         self.buff_client = get_buff_client(cookie)
     
-    async def _notify_sell_failure(
+    async def _rollback_buy_state(
         self,
+        buy_order_id: str,
         user_id: int,
         item_id: int,
-        buy_order_id: str,
+        quantity: int,
         error_message: str
     ):
+        """回滚买入状态 - 事务性回滚机制
+        
+        当卖出失败时，执行完整的回滚：
+        1. 更新订单状态为 'rollback'
+        2. 回滚风险管理器的持仓
+        3. 记录回滚日志
+        """
+        try:
+            # 1. 查找并更新订单状态
+            result = await self.db.execute(
+                select(Order).where(Order.order_id == buy_order_id)
+            )
+            order = result.scalar_one_or_none()
+            
+            if order:
+                order.status = "rollback"
+                order.updated_at = datetime.utcnow()
+                await self.db.commit()
+                logger.warning(f"已回滚订单状态: order_id={buy_order_id}, 原状态={order.status}")
+            
+            # 2. 回滚风险管理器的持仓（卖出失败相当于买入未成交）
+            # 通过传入负数量的买入来抵消之前的持仓
+            await self.risk_manager.update_position(
+                user_id=user_id,
+                item_id=item_id,
+                quantity=-quantity,  # 负数量表示回滚
+                price=0,  # 回滚时不涉及价格
+                side="buy"
+            )
+            
+            logger.info(
+                f"买入状态已回滚: buy_order_id={buy_order_id}, "
+                f"item_id={item_id}, quantity={quantity}, user_id={user_id}, "
+                f"reason={error_message}"
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"回滚买入状态失败: buy_order_id={buy_order_id}, error={e}")
+            # 回滚失败不应抛出异常，以免掩盖原始错误
+            return False
         """卖出失败时发送告警通知"""
         try:
             # 查询物品信息
@@ -167,6 +266,26 @@ class TradingEngine:
         if not item:
             raise Exception("饰品不存在")
         
+        # ===== 风险检查 (P1-1: 独立RiskManager模块) =====
+        # 获取实际价格进行风险检查
+        price_for_check = max_price  # 使用用户设定的最高价格进行预检查
+        passed, risk_events = await self.risk_manager.check_trade_risk(
+            user_id=user_id,
+            item_id=item_id,
+            price=price_for_check,
+            quantity=quantity,
+            side="buy"
+        )
+        if not passed:
+            # 记录风险事件并拒绝交易
+            for event in risk_events:
+                logger.warning(f"风险检查拒绝交易: user_id={user_id}, event={event.event_type.value}, details={event.details}")
+            return ServiceResponse.err(
+                message=f"风险检查未通过: {risk_events[0].details if risk_events else '未知风险'}",
+                code="RISK_CHECK_FAILED"
+            )
+        # ===== 风险检查结束 =====
+        
         # 获取当前价格 (带超时控制)
         try:
             current_price = await asyncio.wait_for(
@@ -234,11 +353,37 @@ class TradingEngine:
             self.db.add(order)
             await self.db.commit()
             
+            # ===== 更新持仓 (P1-1: RiskManager集成) =====
+            await self.risk_manager.update_position(
+                user_id=user_id,
+                item_id=item_id,
+                quantity=quantity,
+                price=price,
+                side="buy"
+            )
+            # ===== 持仓更新结束 =====
+            
             # 提升成功日志级别为 info
             logger.info(
                 f"买入订单创建成功: order_id={order.order_id}, "
                 f"item={item.name}, price={price}, quantity={quantity}, user_id={user_id}"
             )
+            
+            # ===== Webhook 通知：订单创建 =====
+            await self._send_webhook_notification(
+                event_type=WebhookEventType.ORDER_CREATED,
+                order_id=order.order_id,
+                user_id=user_id,
+                data={
+                    "side": "buy",
+                    "item_id": item_id,
+                    "item_name": item.name,
+                    "price": float(price),
+                    "quantity": quantity,
+                    "status": "pending"
+                }
+            )
+            # ===== Webhook 通知结束 =====
             
             return ServiceResponse.ok(
                 data={
@@ -251,6 +396,21 @@ class TradingEngine:
             
         except Exception as e:
             logger.error(f"买入失败: {e}")
+            
+            # ===== Webhook 通知：订单失败 =====
+            if user_id:
+                await self._send_webhook_notification(
+                    event_type=WebhookEventType.ORDER_FAILED,
+                    order_id="",
+                    user_id=user_id,
+                    data={
+                        "side": "buy",
+                        "item_id": item_id,
+                        "error": str(e)
+                    }
+                )
+            # ===== Webhook 通知结束 =====
+            
             return ServiceResponse.err(
                 message=str(e),
                 code="BUY_FAILED"
@@ -273,23 +433,30 @@ class TradingEngine:
         if user_id is None:
             raise ValueError("execute_arbitrage 必须提供 user_id 参数")
         
-        # 使用锁保护并发执行
-        async with self._arbitrage_lock:
-            # 注册任务到 TaskRegistry 以便追踪
-            task_name = f"arbitrage_{item_id}_{datetime.utcnow().timestamp()}"
-            
-            async def do_arbitrage():
-                return await self._execute_arbitrage_internal(
-                    item_id, buy_platform, sell_platform, 
-                    sell_price, quantity, user_id, timeout
+        # 使用细粒度锁+信号量控制并发执行
+        # 获取或创建该item_id的锁
+        if item_id not in self._item_locks:
+            self._item_locks[item_id] = asyncio.Lock()
+        item_lock = self._item_locks[item_id]
+        
+        # 使用信号量控制总体并发数，同时使用item锁保证同一物品串行
+        async with self._semaphore:
+            async with item_lock:
+                # 注册任务到 TaskRegistry 以便追踪
+                task_name = f"arbitrage_{item_id}_{datetime.utcnow().timestamp()}"
+                
+                async def do_arbitrage():
+                    return await self._execute_arbitrage_internal(
+                        item_id, buy_platform, sell_platform, 
+                        sell_price, quantity, user_id, timeout
+                    )
+                
+                # 使用 TaskRegistry 注册任务
+                # 修改：TaskRegistry.register 需要传入函数和参数，而不是已执行的结果
+                task_id = await self._task_registry.register(
+                    task_name,
+                    do_arbitrage  # 传入协程函数
                 )
-            
-            # 使用 TaskRegistry 注册任务
-            # 修改：TaskRegistry.register 需要传入函数和参数，而不是已执行的结果
-            task_id = await self._task_registry.register(
-                task_name,
-                do_arbitrage  # 传入协程函数
-            )
             
             # 异步执行任务
             await self._task_registry.run(task_id, wait=False)
@@ -355,6 +522,23 @@ class TradingEngine:
             if sell_price is None:
                 sell_price = item.steam_lowest_price
             
+            # ===== 卖出前风险检查 (P1-1: RiskManager集成) =====
+            passed, risk_events = await self.risk_manager.check_trade_risk(
+                user_id=user_id,
+                item_id=item_id,
+                price=sell_price,
+                quantity=quantity,
+                side="sell"
+            )
+            if not passed:
+                logger.warning(f"卖出风险检查未通过: user_id={user_id}, item_id={item_id}")
+                for event in risk_events:
+                    if event.event_type.value == "stop_loss_triggered":
+                        logger.info(f"触发止损，建议卖出: {event.details}")
+                    elif event.event_type.value == "take_profit_triggered":
+                        logger.info(f"触发止盈，建议卖出: {event.details}")
+            # ===== 风险检查结束 =====
+            
             # 如果设置了自动卖出
             if settings.AUTO_CONFIRM:
                 try:
@@ -374,6 +558,16 @@ class TradingEngine:
                     )
                     self.db.add(sell_order)
                     await self.db.commit()
+                    
+                    # ===== 更新持仓 (P1-1: RiskManager集成) =====
+                    await self.risk_manager.update_position(
+                        user_id=user_id,
+                        item_id=item_id,
+                        quantity=quantity,
+                        price=sell_price,
+                        side="sell"
+                    )
+                    # ===== 持仓更新结束 =====
                     
                     # 尝试上架到 Steam 市场（如果配置了 Steam 认证信息）
                     if self.steam_market.steam_login or self.steam_market.webcookie:
@@ -446,13 +640,38 @@ class TradingEngine:
                     logger.error(f"卖出流程异常: {e}")
                     # 卖出失败时发送告警通知
                     await self._notify_sell_failure(user_id, item_id, buy_order_id, str(e))
-                    sell_result = ServiceResponse.ok(
-                        data={
-                            "buy_order_id": buy_order_id,
-                            "sell_error": str(e),
-                        },
-                        message="买入完成，卖出流程异常"
+                    
+                    # ===== P1-B1: 执行完整的事务回滚 =====
+                    # 卖出失败时回滚买入状态
+                    rollback_success = await self._rollback_buy_state(
+                        buy_order_id=buy_order_id,
+                        user_id=user_id,
+                        item_id=item_id,
+                        quantity=quantity,
+                        error_message=str(e)
                     )
+                    
+                    if rollback_success:
+                        logger.info(f"卖出失败，已执行回滚: buy_order_id={buy_order_id}")
+                        sell_result = ServiceResponse.ok(
+                            data={
+                                "buy_order_id": buy_order_id,
+                                "sell_error": str(e),
+                                "rollback": "success",
+                            },
+                            message="卖出失败，已回滚买入状态"
+                        )
+                    else:
+                        logger.error(f"卖出失败，回滚执行失败: buy_order_id={buy_order_id}")
+                        sell_result = ServiceResponse.ok(
+                            data={
+                                "buy_order_id": buy_order_id,
+                                "sell_error": str(e),
+                                "rollback": "failed",
+                            },
+                            message="卖出失败，回滚执行失败，请人工检查"
+                        )
+                    # ===== 回滚机制结束 =====
         
         return sell_result or ServiceResponse.ok(
             data={

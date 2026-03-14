@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 熔断器 - 防止外部服务故障导致级联失败
+
+支持 Redis 持久化，状态变更自动同步到 Redis
 """
 import asyncio
 import logging
@@ -10,7 +12,12 @@ from typing import Callable, Any, Optional, Dict
 from functools import wraps
 from datetime import datetime
 
+import redis.asyncio as redis
+
 logger = logging.getLogger(__name__)
+
+# Redis key 前缀
+CIRCUIT_BREAKER_KEY_PREFIX = "circuit_breaker:"
 
 
 class CircuitState(Enum):
@@ -18,6 +25,11 @@ class CircuitState(Enum):
     CLOSED = "closed"      # 正常状态，允许请求通过
     OPEN = "open"         # 熔断状态，拒绝请求
     HALF_OPEN = "half_open"  # 半开状态，尝试允许少量请求
+
+
+def _get_redis_key(name: str) -> str:
+    """获取熔断器在 Redis 中的 key"""
+    return f"{CIRCUIT_BREAKER_KEY_PREFIX}{name}"
 
 
 class CircuitBreaker:
@@ -29,6 +41,7 @@ class CircuitBreaker:
     - 可配置失败阈值和恢复超时
     - 失败计数自动重置
     - 支持异步函数
+    - Redis 持久化支持（可选）
     """
     
     def __init__(
@@ -39,6 +52,7 @@ class CircuitBreaker:
         half_open_max_calls: int = 3,     # 半开状态最大尝试次数
         success_threshold: int = 2,       # 半开状态成功次数阈值
         excluded_exceptions: tuple = (),  # 排除的异常类型
+        redis_client: Optional[redis.Redis] = None,  # Redis 客户端（可选）
     ):
         self.name = name
         self.failure_threshold = failure_threshold
@@ -47,12 +61,112 @@ class CircuitBreaker:
         self.success_threshold = success_threshold
         self.excluded_exceptions = excluded_exceptions
         
+        # Redis 客户端
+        self._redis_client = redis_client
+        self._redis_key = _get_redis_key(name)
+        
+        # 内存状态
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
         self._last_failure_time: Optional[float] = None
         self._last_state_change_time = time.time()
         self._half_open_calls = 0
+        self._opened_at: Optional[float] = None  # 记录打开时间
+        
+        # 尝试从 Redis 恢复状态
+        if self._redis_client is not None:
+            self._load_from_redis()
+    
+    def _load_from_redis(self) -> None:
+        """从 Redis 加载熔断器状态"""
+        try:
+            import asyncio
+            
+            async def _async_load():
+                try:
+                    data = await self._redis_client.hgetall(self._redis_key)
+                    if not data:
+                        return False
+                    
+                    # 恢复状态
+                    if "state" in data:
+                        self._state = CircuitState(data["state"])
+                    if "failure_count" in data:
+                        self._failure_count = int(data["failure_count"])
+                    if "success_count" in data:
+                        self._success_count = int(data["success_count"])
+                    if "last_failure_time" in data and data["last_failure_time"]:
+                        self._last_failure_time = float(data["last_failure_time"])
+                    if "opened_at" in data and data["opened_at"]:
+                        self._opened_at = float(data["opened_at"])
+                    if "last_state_change_time" in data:
+                        self._last_state_change_time = float(data["last_state_change_time"])
+                    if "half_open_calls" in data:
+                        self._half_open_calls = int(data["half_open_calls"])
+                    
+                    logger.info(f"Circuit breaker '{self.name}' state loaded from Redis: {self._state.value}")
+                    return True
+                except Exception as e:
+                    logger.warning(f"Failed to load circuit breaker '{self.name}' from Redis: {e}")
+                    return False
+            
+            # 尝试同步运行异步加载
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果在异步环境中，创建任务
+                    asyncio.create_task(_async_load())
+                else:
+                    loop.run_until_complete(_async_load())
+            except RuntimeError:
+                # 没有事件循环，创建新的
+                asyncio.run(_async_load())
+        except Exception as e:
+            logger.warning(f"Failed to load circuit breaker '{self.name}' from Redis: {e}")
+    
+    async def _save_to_redis(self) -> None:
+        """保存熔断器状态到 Redis（异步）"""
+        if self._redis_client is None:
+            return
+        
+        try:
+            data = {
+                "state": self._state.value,
+                "failure_count": str(self._failure_count),
+                "success_count": str(self._success_count),
+                "last_failure_time": str(self._last_failure_time) if self._last_failure_time else "",
+                "opened_at": str(self._opened_at) if self._opened_at else "",
+                "last_state_change_time": str(self._last_state_change_time),
+                "half_open_calls": str(self._half_open_calls),
+            }
+            await self._redis_client.hset(self._redis_key, mapping=data)
+            # 设置过期时间为 24 小时
+            await self._redis_client.expire(self._redis_key, 86400)
+        except Exception as e:
+            logger.warning(f"Failed to save circuit breaker '{self.name}' to Redis: {e}")
+    
+    def _save_to_redis_sync(self) -> None:
+        """保存熔断器状态到 Redis（同步）"""
+        if self._redis_client is None:
+            return
+        
+        try:
+            import asyncio
+            
+            async def _async_save():
+                await self._save_to_redis()
+            
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(_async_save())
+                else:
+                    loop.run_until_complete(_async_save())
+            except RuntimeError:
+                asyncio.run(_async_save())
+        except Exception as e:
+            logger.warning(f"Failed to save circuit breaker '{self.name}' to Redis: {e}")
     
     @property
     def state(self) -> CircuitState:
@@ -78,10 +192,16 @@ class CircuitBreaker:
         if new_state == CircuitState.HALF_OPEN:
             self._half_open_calls = 0
             self._success_count = 0
+        elif new_state == CircuitState.OPEN:
+            # 记录打开时间
+            self._opened_at = time.time()
         
         logger.info(
             f"Circuit breaker '{self.name}' state changed: {old_state.value} -> {new_state.value}"
         )
+        
+        # 同步保存到 Redis
+        self._save_to_redis_sync()
     
     def _record_success(self) -> None:
         """记录成功"""
@@ -95,6 +215,9 @@ class CircuitBreaker:
         elif self._state == CircuitState.CLOSED:
             # 成功时重置失败计数
             self._failure_count = 0
+        
+        # 同步保存到 Redis
+        self._save_to_redis_sync()
     
     def _record_failure(self) -> None:
         """记录失败"""
@@ -108,6 +231,9 @@ class CircuitBreaker:
         elif self._state == CircuitState.CLOSED:
             if self._failure_count >= self.failure_threshold:
                 self._transition_to(CircuitState.OPEN)
+        
+        # 同步保存到 Redis
+        self._save_to_redis_sync()
     
     async def call(self, func: Callable, *args, **kwargs) -> Any:
         """
@@ -164,8 +290,29 @@ class CircuitBreaker:
         self._failure_count = 0
         self._success_count = 0
         self._last_failure_time = None
+        self._opened_at = None
         self._half_open_calls = 0
         logger.info(f"Circuit breaker '{self.name}' has been reset")
+        
+        # 同步保存到 Redis
+        self._save_to_redis_sync()
+        
+        # 如果有 Redis 客户端，删除 Redis 中的状态
+        if self._redis_client is not None:
+            try:
+                import asyncio
+                async def _async_delete():
+                    await self._redis_client.delete(self._redis_key)
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(_async_delete())
+                    else:
+                        loop.run_until_complete(_async_delete())
+                except RuntimeError:
+                    asyncio.run(_async_delete())
+            except Exception as e:
+                logger.warning(f"Failed to delete circuit breaker '{self.name}' from Redis: {e}")
     
     def get_stats(self) -> dict:
         """获取熔断器统计信息"""
@@ -175,12 +322,25 @@ class CircuitBreaker:
             "failure_count": self._failure_count,
             "success_count": self._success_count,
             "last_failure_time": self._last_failure_time,
+            "opened_at": self._opened_at,
             "last_state_change_time": self._last_state_change_time,
             "half_open_calls": self._half_open_calls,
         }
     
     def __repr__(self) -> str:
         return f"CircuitBreaker(name='{self.name}', state={self.state.value})"
+    
+    def set_redis_client(self, redis_client: redis.Redis) -> None:
+        """设置 Redis 客户端（可选，用于持久化）"""
+        self._redis_client = redis_client
+        self._redis_key = _get_redis_key(self.name)
+        # 尝试从 Redis 加载状态
+        if self._redis_client is not None:
+            self._load_from_redis()
+    
+    def has_redis(self) -> bool:
+        """检查是否配置了 Redis 客户端"""
+        return self._redis_client is not None
 
 
 class CircuitBreakerOpen(Exception):

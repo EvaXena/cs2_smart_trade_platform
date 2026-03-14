@@ -36,8 +36,8 @@ class SteamAPICircuitOpen(SteamAPIError):
 class SteamAPI:
     """Steam API 客户端"""
     
-    # 默认超时配置
-    DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
+    # 默认超时配置 - 缩短为10秒以提高响应速度
+    DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)
     # 分类超时配置
     PRICE_TIMEOUT = aiohttp.ClientTimeout(total=5, connect=3)    # 价格查询：5秒
     INVENTORY_TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)  # 库存查询：10秒

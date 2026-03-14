@@ -10,6 +10,7 @@
 - 与交易服务集成
 """
 import asyncio
+import json
 import logging
 from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime, timedelta
@@ -345,20 +346,47 @@ class RiskManager:
     _DAILY_STATS_KEY = "risk:daily:{user_id}:{date}"
     _RISK_FLAGS_KEY = "risk:flags:{user_id}"
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, checker_config: Dict[str, Dict[str, Any]] = None):
         self.db = db
         self._rules = self._load_default_rules()
         self._redis = None
-        # 初始化风险检查器
-        self._init_checkers()
+        # 初始化风险检查器，支持配置化
+        self._init_checkers(checker_config)
     
-    def _init_checkers(self):
-        """初始化风险检查器"""
-        self.checkers: Dict[str, RiskCheckerBase] = {
-            "price_deviation": PriceDeviationChecker(self, threshold=15.0),
-            "wash_trade": WashTradeChecker(self),
-            "high_frequency": HighFrequencyChecker(self),
-        }
+    def _init_checkers(self, checker_config: Dict[str, Dict[str, Any]] = None):
+        """初始化风险检查器
+        
+        Args:
+            checker_config: 检查器配置字典，格式如：
+                {
+                    "price_deviation": {"threshold": 15.0},
+                    "wash_trade": {"enabled": True},
+                    "high_frequency": {"max_frequency_per_minute": 10}
+                }
+        """
+        if checker_config is None:
+            checker_config = {}
+        
+        self.checkers: Dict[str, RiskCheckerBase] = {}
+        
+        # 价格偏离检查器
+        price_config = checker_config.get("price_deviation", {})
+        self.checkers["price_deviation"] = PriceDeviationChecker(
+            self, 
+            threshold=price_config.get("threshold", 15.0)
+        )
+        
+        # 刷单检查器
+        wash_config = checker_config.get("wash_trade", {})
+        self.checkers["wash_trade"] = WashTradeChecker(self)
+        
+        # 高频交易检查器
+        hf_config = checker_config.get("high_frequency", {})
+        self.checkers["high_frequency"] = HighFrequencyChecker(
+            self,
+            time_window=hf_config.get("time_window", 60),
+            max_trades=hf_config.get("max_trades", 10)
+        )
     
     def _load_default_rules(self) -> Dict[str, RiskRule]:
         """加载默认风险规则"""
@@ -930,7 +958,7 @@ class RiskManager:
             if redis_client:
                 key = self._RISK_EVENTS_KEY.format(user_id=user_id)
                 events = await redis_client.lrange(key, 0, limit - 1)
-                return [eval(e) for e in events]  # 安全风险：实际项目中应使用json解析
+                return [json.loads(e) for e in events]  # 使用JSON解析替代eval
             return []
         except Exception as e:
             logger.error(f"获取风险事件失败: {e}")

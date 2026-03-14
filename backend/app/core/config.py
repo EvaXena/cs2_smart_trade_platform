@@ -168,6 +168,33 @@ class Settings(BaseSettings):
     DB_BUSY_TIMEOUT: int = Field(default=30000, description="SQLite busy_timeout（毫秒）")
     DB_POOL_RECYCLE: int = Field(default=3600, description="数据库连接池回收时间（秒）")
     DB_POOL_TIMEOUT: int = Field(default=30, description="数据库连接池超时（秒）")
+    # ===== P2-B4: 生产环境连接池大小限制 =====
+    DB_POOL_SIZE: int = Field(default=5, description="数据库连接池大小（开发环境默认）")
+    DB_MAX_OVERFLOW: int = Field(default=10, description="数据库最大溢出连接数")
+    
+    @property
+    def db_pool_config(self) -> Dict:
+        """获取数据库连接池配置（根据环境自动调整）"""
+        base_config = {
+            "pool_recycle": self.DB_POOL_RECYCLE,
+            "pool_timeout": self.DB_POOL_TIMEOUT,
+            "pool_pre_ping": True,
+        }
+        
+        if self.is_production:
+            # 生产环境使用更大的连接池
+            return {
+                **base_config,
+                "pool_size": 20,  # 生产环境固定20
+                "max_overflow": 30,  # 生产环境最大30
+            }
+        else:
+            # 开发环境使用配置的值
+            return {
+                **base_config,
+                "pool_size": self.DB_POOL_SIZE,
+                "max_overflow": self.DB_MAX_OVERFLOW,
+            }
 
     # 缓存配置
     CACHE_CLEANUP_INTERVAL: int = Field(default=300, description="缓存清理间隔（秒）")
@@ -195,26 +222,44 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # 验证必需的配置
-        if self.is_production:
-            # 生产环境必须设置 SECRET_KEY
-            if not self.SECRET_KEY:
-                raise ValueError("生产环境必须设置 SECRET_KEY 环境变量")
-            # 生产环境必须验证密钥长度
-            if len(self.SECRET_KEY) < 32:
-                raise ValueError(f"SECRET_KEY 长度必须至少为32字符，当前长度: {len(self.SECRET_KEY)}")
-        else:
-            # 非生产环境警告
-            if not self.SECRET_KEY:
-                import warnings
-                warnings.warn("未设置 SECRET_KEY，使用不安全的默认密钥（仅限开发环境使用）")
-            elif len(self.SECRET_KEY) < 16:
-                import warnings
-                warnings.warn(f"SECRET_KEY 长度过短（{len(self.SECRET_KEY)}字符），建议至少32字符")
+        # ===== P1-S1: 强制校验密钥 - 启动时必须设置 =====
+        # 所有环境都必须设置 SECRET_KEY
+        if not self.SECRET_KEY:
+            raise ValueError(
+                "SECRET_KEY 环境变量未设置，拒绝启动。"
+                "请设置 SECRET_KEY 环境变量后再启动应用。"
+            )
         
-        if not self.ENCRYPTION_KEY:
-            import warnings
-            warnings.warn("未设置 ENCRYPTION_KEY，敏感数据将使用临时密钥加密")
+        # 生产环境必须验证密钥长度
+        if self.is_production:
+            if len(self.SECRET_KEY) < 32:
+                raise ValueError(
+                    f"生产环境 SECRET_KEY 长度必须至少为32字符，当前长度: {len(self.SECRET_KEY)}"
+                )
+            # 生产环境强制要求 ENCRYPTION_KEY
+            if not self.ENCRYPTION_KEY:
+                raise ValueError(
+                    "生产环境必须设置 ENCRYPTION_KEY 环境变量，拒绝启动。"
+                    "请设置 ENCRYPTION_KEY 环境变量后再启动应用。"
+                )
+            if len(self.ENCRYPTION_KEY) < 32:
+                raise ValueError(
+                    f"生产环境 ENCRYPTION_KEY 长度必须至少为32字符，当前长度: {len(self.ENCRYPTION_KEY)}"
+                )
+        else:
+            # 开发环境警告但允许启动
+            if len(self.SECRET_KEY) < 16:
+                import warnings
+                warnings.warn(
+                    f"SECRET_KEY 长度过短（{len(self.SECRET_KEY)}字符），建议至少32字符用于安全"
+                )
+            
+            if not self.ENCRYPTION_KEY:
+                import warnings
+                warnings.warn(
+                    "未设置 ENCRYPTION_KEY，敏感数据将使用临时密钥加密（仅限开发环境）"
+                )
+        # ===== 密钥校验结束 =====
     
     def get_rate_limit_config(self, endpoint: str) -> Dict:
         """获取特定端点的限流配置"""

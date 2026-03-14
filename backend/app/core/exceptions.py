@@ -17,11 +17,40 @@ logger = logging.getLogger(__name__)
 
 # 敏感信息脱敏模式
 SENSITIVE_PATTERNS = [
+    # 基础认证信息
     r'(password|passwd|pwd)[=:\s][^\s,}]*',
     r'(secret|token|key|api_key|apikey)[=:\s][^\s,}]*',
     r'(connection|conn|redis|mysql|postgres)[^\s,}]*',
+    # JWT/Bearer Token
     r'(Bearer)\s+[A-Za-z0-9\-._~+/]+=*',
+    # ===== P2-B3: 扩展敏感字段脱敏 =====
+    # 授权相关
+    r'(authorization|auth|auth_token)[=:\s][^\s,}]*',
+    # 会话相关
+    r'(session|session_id|session_token)[=:\s][^\s,}]*',
+    r'(cookie|cookies)[=:\s][^\s,}]*',
+    # Steam 特定
+    r'(steam_login|steam_session|steam_webcookie|steam_token)[=:\s][^\s,}]*',
+    r'(steamguard|qr_code|sessionid)[=:\s][^\s,}]*',
+    # BUFF 特定
+    r'(buff_cookie|buff_session|buff_token)[=:\s][^\s,}]*',
+    # 加密密钥
+    r'(encryption_key|encrypt_key|private_key)[=:\s][^\s,}]*',
+    # 信用卡/支付（以防万一）
+    r'(card_number|card_no|cvv|credit_card)[=:\s][^\s,}]*',
 ]
+
+# 敏感键名（用于字典递归脱敏）
+SENSITIVE_KEYS = {
+    'password', 'secret', 'token', 'key', 'connection', 'credential', 'api_key',
+    # 扩展敏感键
+    'authorization', 'auth', 'session_id', 'session', 'cookie', 'cookies',
+    'steam_login', 'steam_webcookie', 'steam_token', 'steam_session',
+    'buff_cookie', 'buff_session', 'buff_token', 'buff_key',
+    'encryption_key', 'encrypt_key', 'private_key',
+    'card_number', 'card_no', 'cvv', 'credit_card',
+    'access_token', 'refresh_token', 'access-key', 'secret-key',
+}
 
 
 def sanitize_error_message(message: str) -> str:
@@ -41,9 +70,8 @@ def sanitize_details(details: dict, depth: int = 0) -> dict:
     """递归脱敏字典中的敏感字段"""
     if depth > 3:
         return {"...": "max depth reached"}
-    sensitive_keys = {'password', 'secret', 'token', 'key', 'connection', 'credential', 'api_key'}
     if isinstance(details, dict):
-        return {k: "***" if k.lower() in sensitive_keys else sanitize_details(v, depth+1) 
+        return {k: "***" if k.lower() in SENSITIVE_KEYS else sanitize_details(v, depth+1) 
                 for k, v in details.items()}
     elif isinstance(details, list):
         return [sanitize_details(item, depth+1) for item in details]

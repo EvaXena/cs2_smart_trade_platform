@@ -40,8 +40,13 @@ class EncryptionManager:
         
         use_fallback = False
         
-        # 检查是否在生产环境
-        is_production = os.environ.get("DEBUG", "").lower() != "true"
+        # 检查是否在生产环境 - 优先使用 settings.is_production，保持与 config.py 一致
+        try:
+            from app.core.config import settings
+            is_production = settings.is_production
+        except Exception:
+            # 如果无法导入 settings，回退到 DEBUG 环境变量检查
+            is_production = os.environ.get("DEBUG", "").lower() != "true"
         
         if not key:
             # 生产环境强制要求 ENCRYPTION_KEY

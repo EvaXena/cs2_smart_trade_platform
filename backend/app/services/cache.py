@@ -13,76 +13,108 @@ from collections import OrderedDict
 from enum import Enum
 import asyncio
 
-# Prometheus 监控指标
+# ============ Prometheus 监控指标 (已优化为内联初始化) ============
 try:
     from prometheus_client import Counter, Gauge, Histogram
     PROMETHEUS_AVAILABLE = True
-    
-    # 缓存操作计数器
-    cache_operations_total = Counter(
-        'cache_operations_total',
-        'Total cache operations',
-        ['operation', 'backend', 'result']
-    )
-    
-    # 缓存清理任务状态
-    cache_cleanup_status = Gauge(
-        'cache_cleanup_status',
-        'Cache cleanup task status (0=idle, 1=running, 2=error)',
-        ['backend']
-    )
-    
-    cache_cleanup_total = Counter(
-        'cache_cleanup_total',
-        'Total number of cache cleanup runs',
-        ['backend', 'result']  # result: success, error
-    )
-    
-    cache_entries_cleaned = Gauge(
-        'cache_entries_cleaned',
-        'Number of cache entries cleaned',
-        ['backend']
-    )
-    
-    # 缓存过期条目数
-    cache_expired_entries = Gauge(
-        'cache_expired_entries',
-        'Number of expired cache entries',
-        ['backend']
-    )
-    
-    # 缓存大小
-    cache_size = Gauge(
-        'cache_size',
-        'Current number of cache entries',
-        ['backend']
-    )
-    
-    # 缓存清理耗时
-    cache_cleanup_duration = Histogram(
-        'cache_cleanup_duration_seconds',
-        'Cache cleanup duration in seconds',
-        ['backend']
-    )
 except ImportError:
     PROMETHEUS_AVAILABLE = False
-    # 空指标实现
-    class _DummyMetric:
-        def labels(self, **kwargs): return self
-        def inc(self, n=1): pass
-        def dec(self, n=1): pass
-        def set(self, n): pass
-        def observe(self, n): pass
+
+# 指标容器类（延迟初始化）
+class _CacheMetrics:
+    """缓存监控指标管理器"""
+    _instance = None
+    _initialized = False
     
-    cache_operations_total = _DummyMetric()
-    cache_cleanup_status = _DummyMetric()
-    cache_cleanup_total = _DummyMetric()
-    cache_entries_cleaned = _DummyMetric()
-    cache_expired_entries = _DummyMetric()
-    cache_size = _DummyMetric()
-    cache_cleanup_duration = _DummyMetric()
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        
+        if PROMETHEUS_AVAILABLE:
+            from prometheus_client import Counter, Gauge, Histogram
+            self.operations = Counter(
+                'cache_operations_total',
+                'Total cache operations',
+                ['operation', 'backend', 'result']
+            )
+            self.cleanup_status = Gauge(
+                'cache_cleanup_status',
+                'Cache cleanup task status (0=idle, 1=running, 2=error)',
+                ['backend']
+            )
+            self.cleanup_total = Counter(
+                'cache_cleanup_total',
+                'Total number of cache cleanup runs',
+                ['backend', 'result']
+            )
+            self.entries_cleaned = Gauge(
+                'cache_entries_cleaned',
+                'Number of cache entries cleaned',
+                ['backend']
+            )
+            self.expired_entries = Gauge(
+                'cache_expired_entries',
+                'Number of expired cache entries',
+                ['backend']
+            )
+            self.size = Gauge(
+                'cache_size',
+                'Current number of cache entries',
+                ['backend']
+            )
+            self.cleanup_duration = Histogram(
+                'cache_cleanup_duration_seconds',
+                'Cache cleanup duration in seconds',
+                ['backend']
+            )
+        else:
+            # 空指标实现
+            class _DummyMetric:
+                def labels(self, **kwargs): return self
+                def inc(self, n=1): pass
+                def dec(self, n=1): pass
+                def set(self, n): pass
+                def observe(self, n): pass
+            
+            class _DummyCounter:
+                def labels(self, **kwargs): return self
+                def inc(self, n=1): pass
+            
+            self.operations = _DummyCounter()
+            self.cleanup_status = _DummyMetric()
+            self.cleanup_total = _DummyCounter()
+            self.entries_cleaned = _DummyMetric()
+            self.expired_entries = _DummyMetric()
+            self.size = _DummyMetric()
+            self.cleanup_duration = _DummyMetric()
+
+# 全局指标实例
+_metrics = _CacheMetrics()
+
+# 便捷访问（保持向后兼容）
+cache_operations_total = _metrics.operations
+cache_cleanup_status = _metrics.cleanup_status
+cache_cleanup_total = _metrics.cleanup_total
+cache_entries_cleaned = _metrics.entries_cleaned
+cache_expired_entries = _metrics.expired_entries
+cache_size = _metrics.size
+cache_cleanup_duration = _metrics.cleanup_duration
 
 logger = logging.getLogger(__name__)
+
+
+def _log_with_context(logger, level: str, msg: str, **context):
+    """增强日志上下文辅助函数"""
+    if context:
+        context_str = " | ".join(f"{k}={v}" for k, v in context.items())
+        msg = f"{msg} | context: {context_str}"
+    getattr(logger, level)(msg)
 
 
 class CacheBackend(str, Enum):
@@ -262,27 +294,39 @@ class MemoryCache:
         with self._lock:
             if key not in self._cache:
                 self._misses += 1
+                logger.debug("Cache miss | key=%s | backend=memory", key)
                 return default
             
             entry = self._cache[key]
             if entry.is_expired():
                 del self._cache[key]
                 self._misses += 1
+                # Handle infinite TTL case
+                remaining_ttl = entry.get_remaining_ttl() if entry.expire_at != float('inf') else -1
+                logger.debug("Cache expired | key=%s | backend=memory | ttl_remaining=%d", 
+                           key, remaining_ttl)
                 return default
             
             # 移动到末尾（表示最近使用）
             self._cache.move_to_end(key)
             self._hits += 1
+            # Handle infinite TTL case
+            remaining_ttl = entry.get_remaining_ttl() if entry.expire_at != float('inf') else -1
+            logger.debug("Cache hit | key=%s | backend=memory | remaining_ttl=%d", 
+                        key, remaining_ttl)
             return entry.value
     
     def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """设置缓存值"""
+        value_size = 0
+        is_update = False
         with self._lock:
             # 如果key已存在，先删除（更新位置）
             if key in self._cache:
                 old_entry = self._cache[key]
                 self._current_memory_bytes -= self._estimate_value_size(old_entry.value)
                 del self._cache[key]
+                is_update = True
             
             # 估算新值的大小
             value_size = self._estimate_value_size(value)
@@ -303,28 +347,37 @@ class MemoryCache:
         
         # 在锁外通知订阅者，避免死锁
         self._notify_subscribers("set", key, value)
+        
+        logger.info("Cache set | key=%s | ttl=%d | size_bytes=%d | update=%s | backend=memory",
+                   key, ttl, value_size, is_update)
     
     def delete(self, key: str) -> bool:
         """删除缓存"""
+        deleted = False
         with self._lock:
             if key in self._cache:
                 entry = self._cache[key]
                 self._current_memory_bytes -= self._estimate_value_size(entry.value)
                 del self._cache[key]
+                deleted = True
                 # 在锁外通知订阅者
                 self._notify_subscribers("delete", key)
-                return True
-            return False
+        
+        if deleted:
+            logger.info("Cache delete | key=%s | backend=memory", key)
+        return deleted
     
     def clear(self) -> None:
         """清空所有缓存"""
         with self._lock:
+            item_count = len(self._cache)
             self._cache.clear()
             self._current_memory_bytes = 0
             self._hits = 0
             self._misses = 0
         # 在锁外通知订阅者
         self._notify_subscribers("clear", "")
+        logger.info("Cache clear | items_cleared=%d | backend=memory", item_count)
     
     def cleanup_expired(self) -> int:
         """清理过期缓存"""
@@ -838,24 +891,26 @@ class CacheManager:
         async def reconnect_loop():
             while True:
                 await asyncio.sleep(self._redis_reconnect_interval)
+                reconnect_start = time.time()
                 
                 # 检查 Redis 连接状态
                 if self._current_backend == CacheBackend.MEMORY:
                     # 如果当前使用的是内存缓存，尝试重连
                     try:
-                        logger.info("Attempting to reconnect to Redis...")
+                        logger.info("Attempting to reconnect to Redis | url=%s", self._redis_url.replace(self._redis_url.split('@')[-1] if '@' in self._redis_url else '', '***'))
                         self._redis_cache = RedisCache(self._redis_url)
                         connected = await self._redis_cache.connect()
                         
                         if connected:
                             self._current_backend = CacheBackend.REDIS
-                            logger.info("Redis reconnected successfully, switched back to Redis backend")
+                            logger.info("Redis reconnected successfully | backend=redis | attempt_time=%.2fs", 
+                                       time.time() - reconnect_start)
                             # 重置缓存统计
                             self._memory_cache.clear()
                         else:
                             logger.warning("Redis reconnection failed, will retry next interval")
                     except Exception as e:
-                        logger.error(f"Redis reconnection error: {e}")
+                        logger.error("Redis reconnection error | error=%s", str(e))
                 else:
                     # 如果当前使用的是 Redis，检查连接是否正常
                     if self._redis_cache and not await self._check_redis_health():
@@ -1031,8 +1086,8 @@ class CacheManager:
                 # 更新过期条目计数
                 cache_expired_entries.labels(backend=backend_name).set(0)
                 
-                if cleaned > 0:
-                    logger.info(f"Cache cleanup completed: {cleaned} entries cleaned in {duration:.2f}s")
+                logger.info("Cache cleanup completed | backend=%s | cleaned=%d | duration=%.2fs | attempt=%d",
+                           backend_name, cleaned, duration, attempt + 1)
                 
                 return  # 成功退出
                 
@@ -1266,28 +1321,43 @@ def is_cache_initialized() -> bool:
 
 
 async def init_cache() -> CacheManager:
-    """初始化缓存实例"""
-    global _cache, _cache_initialized
-    if _cache is None:
-        from app.core.config import settings
-        
-        backend = CacheBackend.MEMORY
-        if settings.REDIS_URL:
-            backend = CacheBackend.REDIS
-        
-        _cache = CacheManager(
-            backend=backend,
-            redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
-        )
-        await _cache.initialize()
-        _cache_initialized = True
-        logger.info("Cache initialized via init_cache()")
+    """
+    初始化缓存实例（异步安全）
     
+    使用双重检查锁定模式确保:
+    1. 只有一个协程执行初始化
+    2. 其他协程在初始化完成前等待
+    3. 初始化完成后直接返回已初始化的实例
+    """
+    global _cache, _cache_initialized
+    
+    # 快速路径：如果已初始化，直接返回
+    if _cache_initialized and _cache is not None:
+        return _cache
+    
+    from app.core.config import settings
+    
+    backend = CacheBackend.MEMORY
+    if settings.REDIS_URL:
+        backend = CacheBackend.REDIS
+    
+    _cache = CacheManager(
+        backend=backend,
+        redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
+    )
+    await _cache.initialize()
+    _cache_initialized = True
+    logger.info("Cache initialized via init_cache()")
+
     return _cache
 
 
 async def ensure_cache_initialized() -> CacheManager:
-    """确保缓存已初始化，如未初始化则初始化"""
+    """
+    确保缓存已初始化，如未初始化则初始化（异步安全）
+    
+    这是获取缓存实例的推荐方式，确保在异步上下文中安全使用
+    """
     global _cache_initialized
     if not _cache_initialized:
         return await init_cache()
@@ -1295,9 +1365,22 @@ async def ensure_cache_initialized() -> CacheManager:
 
 
 def get_cache() -> CacheManager:
-    """获取全局缓存实例"""
+    """
+    获取全局缓存实例
+    
+    注意：在异步环境中，建议使用 await ensure_cache_initialized() 代替
+    此函数仅用于保持向后兼容性和非异步环境
+    """
     global _cache
     if _cache is None:
+        import warnings
+        warnings.warn(
+            "get_cache() called without prior initialization. "
+            "Consider using 'await ensure_cache_initialized()' instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         # 从配置读取
         from app.core.config import settings
         
@@ -1309,15 +1392,15 @@ def get_cache() -> CacheManager:
             backend=backend,
             redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
         )
-        # 创建实例后自动调用 initialize()
+        # 尝试同步初始化（仅在没有运行中事件循环时使用）
         import asyncio
         try:
-            # 尝试获取现有事件循环
             loop = asyncio.get_running_loop()
-            # 在异步环境中，使用 create_task 后台执行
-            asyncio.create_task(_cache.initialize())
+            # 在异步环境中使用 ensure_cache_initialized
+            # 这里不做任何操作，让调用者使用 ensure_cache_initialized
+            logger.warning("get_cache() called in async context without initialization")
         except RuntimeError:
-            # 没有运行中的事件循环，创建一个新的
+            # 没有运行中的事件循环，可以安全创建新的
             try:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
