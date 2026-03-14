@@ -39,6 +39,9 @@ class MeanReversionStrategyService:
     _active_strategies: Dict[int, 'MeanReversionStrategyService'] = {}
     _locks: Dict[int, asyncio.Lock] = {}
     _locks_lock = asyncio.Lock()
+    # Webhook 任务管理
+    _active_webhook_tasks: Dict[str, asyncio.Task] = {}
+    _webhook_tasks_lock = asyncio.Lock()
     
     # 价格历史缓存
     _price_history: Dict[int, List[float]] = {}
@@ -564,7 +567,7 @@ class MeanReversionStrategyService:
     async def _send_webhook(self, event_type: WebhookEventType, data: Dict[str, Any]) -> None:
         """发送Webhook通知"""
         try:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 webhook_manager.send_webhook(
                     event_type=event_type,
                     data=data,
@@ -572,8 +575,22 @@ class MeanReversionStrategyService:
                     order_id=f"MR-{self.strategy_id}"
                 )
             )
+            # 保存任务引用以便管理
+            task_key = f"mr_webhook_{self.strategy_id}_{event_type.value}"
+            async with self._webhook_tasks_lock:
+                self._active_webhook_tasks[task_key] = task
+            # 任务完成后自动清理
+            task.add_done_callback(
+                lambda t: asyncio.create_task(self._remove_webhook_task(task_key))
+            )
         except Exception as e:
             logger.warning(f"发送Webhook失败: {e}")
+    
+    async def _remove_webhook_task(self, task_key: str) -> None:
+        """移除已完成的Webhook任务引用"""
+        async with self._webhook_tasks_lock:
+            if task_key in self._active_webhook_tasks:
+                del self._active_webhook_tasks[task_key]
     
     async def _clear_cache(self) -> None:
         """清理缓存"""

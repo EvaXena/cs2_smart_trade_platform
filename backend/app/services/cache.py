@@ -130,10 +130,14 @@ class CacheEntry:
     AVALANCHE_JITTER_MIN = 0.9
     AVALANCHE_JITTER_MAX = 1.1
     
+    # 类级别标志，用于测试环境禁用随机抖动
+    _enable_jitter = True
+    
     def __init__(self, value: Any, ttl: int, enable_avalanche_protection: bool = True):
         self.value = value
-        # 缓存雪崩保护：为 TTL 添加随机抖动
-        if enable_avalanche_protection and ttl > 0:
+        self.original_ttl = ttl  # 记录原始 TTL
+        # 缓存雪崩保护：为 TTL 添加随机抖动（默认启用）
+        if enable_avalanche_protection and ttl > 0 and CacheEntry._enable_jitter:
             jitter = random.uniform(self.AVALANCHE_JITTER_MIN, self.AVALANCHE_JITTER_MAX)
             actual_ttl = int(ttl * jitter)
             # 确保TTL至少为1秒，避免因抖动导致永不过期
@@ -141,7 +145,11 @@ class CacheEntry:
         else:
             actual_ttl = ttl
         self.expire_at = time.time() + actual_ttl if actual_ttl > 0 else float('inf')
-        self.original_ttl = ttl  # 记录原始 TTL
+    
+    @classmethod
+    def set_jitter_enabled(cls, enabled: bool) -> None:
+        """设置是否启用随机抖动（用于测试环境）"""
+        cls._enable_jitter = enabled
     
     def is_expired(self) -> bool:
         return time.time() > self.expire_at
@@ -512,7 +520,7 @@ class RedisCache:
     async def disconnect(self) -> None:
         """断开 Redis 连接"""
         if self._redis:
-            await self._redis.close()
+            await self._redis.aclose()
             self._redis = None
             self._connected = False
     
@@ -919,8 +927,8 @@ class CacheManager:
                         if self._redis_cache:
                             await self._redis_cache.disconnect()
         
-        # 创建后台任务
-        asyncio.create_task(reconnect_loop())
+        # 创建后台任务并保存引用，防止资源泄露
+        self._redis_reconnect_task = asyncio.create_task(reconnect_loop())
         logger.info(f"Redis reconnect task started (interval: {self._redis_reconnect_interval}s)")
     
     async def _check_redis_health(self) -> bool:
@@ -961,6 +969,36 @@ class CacheManager:
             logger.error(f"Manual Redis reconnection error: {e}")
             return False
     
+    async def shutdown(self) -> None:
+        """
+        关闭缓存管理器并清理后台任务
+        
+        在应用关闭时调用，以防止 "Task was destroyed but it is pending!" 警告
+        """
+        # 取消后台清理任务
+        if self._cleanup_task is not None and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                logger.info("Cleanup task cancelled")
+            self._cleanup_task = None
+        
+        # 取消 Redis 重连任务
+        if self._redis_reconnect_task is not None and not self._redis_reconnect_task.done():
+            self._redis_reconnect_task.cancel()
+            try:
+                await self._redis_reconnect_task
+            except asyncio.CancelledError:
+                logger.info("Redis reconnect task cancelled")
+            self._redis_reconnect_task = None
+        
+        # 断开 Redis 连接
+        if self._redis_cache:
+            await self._redis_cache.disconnect()
+        
+        logger.info("Cache manager shutdown completed")
+    
     def _get_ttl_with_jitter(self, ttl: int) -> int:
         """
         获取带随机抖动的 TTL，防止缓存雪崩
@@ -971,10 +1009,14 @@ class CacheManager:
             ttl: 原始 TTL（秒）
             
         Returns:
-            带抖动的 TTL（秒）
+            带抖动的 TTL（秒），至少为1秒
         """
+        if ttl <= 0:
+            return ttl
         jitter = random.uniform(0.9, 1.1)
-        return int(ttl * jitter)
+        result = int(ttl * jitter)
+        # 确保TTL至少为1秒，避免因抖动导致TTL为0
+        return max(1, result)
     
     async def warmup_cache(self) -> None:
         """
@@ -1060,8 +1102,8 @@ class CacheManager:
                     await asyncio.sleep(cleanup_config["interval"])
                     await self._execute_cleanup_with_retry(cleanup_config["max_retries"], cleanup_config["retry_delay"])
             
-            # 创建后台任务（不阻塞启动）
-            asyncio.create_task(cleanup_loop())
+            # 创建后台任务并保存引用，防止资源泄露
+            self._cleanup_task = asyncio.create_task(cleanup_loop())
     
     async def _execute_cleanup_with_retry(self, max_retries: int = 3, retry_delay: int = 5) -> None:
         """执行清理任务（带重试机制）"""
@@ -1358,10 +1400,10 @@ async def ensure_cache_initialized() -> CacheManager:
     
     这是获取缓存实例的推荐方式，确保在异步上下文中安全使用
     """
-    global _cache_initialized
+    global _cache, _cache_initialized
     if not _cache_initialized:
         return await init_cache()
-    return get_cache()
+    return _cache
 
 
 def get_cache() -> CacheManager:
@@ -1371,7 +1413,13 @@ def get_cache() -> CacheManager:
     注意：在异步环境中，建议使用 await ensure_cache_initialized() 代替
     此函数仅用于保持向后兼容性和非异步环境
     """
-    global _cache
+    global _cache, _cache_initialized
+    
+    # 如果缓存已经初始化，直接返回，不发出警告
+    if _cache_initialized and _cache is not None:
+        return _cache
+    
+    # 缓存未初始化，发 出警告并尝试创建
     if _cache is None:
         import warnings
         warnings.warn(

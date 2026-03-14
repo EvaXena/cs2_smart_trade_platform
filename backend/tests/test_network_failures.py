@@ -81,9 +81,9 @@ class TestNetworkFailureHandling:
     @pytest.mark.asyncio
     async def test_graceful_degradation(self):
         """测试优雅降级"""
-        from app.services.cache import get_cache
+        from app.services.cache import ensure_cache_initialized
         
-        cache = get_cache()
+        cache = await ensure_cache_initialized()
         
         # 设置一个会过期的值
         cache.set("expiring_key", "value", ttl=1)
@@ -193,9 +193,9 @@ class TestCacheNetworkFallback:
     @pytest.mark.asyncio
     async def test_cache_fallback_on_network_error(self):
         """测试网络错误时缓存降级"""
-        from app.services.cache import get_cache, CacheBackend
+        from app.services.cache import ensure_cache_initialized
         
-        cache = get_cache()
+        cache = await ensure_cache_initialized()
         
         # 验证降级到内存缓存
         cache.set("test_key", "test_value", ttl=60)
@@ -204,9 +204,9 @@ class TestCacheNetworkFallback:
     @pytest.mark.asyncio
     async def test_cache_set_get(self):
         """测试缓存基本操作"""
-        from app.services.cache import get_cache
+        from app.services.cache import ensure_cache_initialized
         
-        cache = get_cache()
+        cache = await ensure_cache_initialized()
         
         # 基本设置和获取
         cache.set("key1", "value1", ttl=60)
@@ -219,9 +219,9 @@ class TestCacheNetworkFallback:
     @pytest.mark.asyncio
     async def test_cache_ttl_expiry(self):
         """测试缓存 TTL 过期"""
-        from app.services.cache import get_cache
+        from app.services.cache import ensure_cache_initialized
         
-        cache = get_cache()
+        cache = await ensure_cache_initialized()
         
         # 设置短期缓存
         cache.set("ttl_key", "ttl_value", ttl=1)

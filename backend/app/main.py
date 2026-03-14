@@ -79,8 +79,8 @@ async def lifespan(app: FastAPI):
     
     # 启动时初始化缓存服务（带完整降级）
     try:
-        cache = get_cache()
-        await cache.initialize()
+        from app.services.cache import ensure_cache_initialized
+        cache = await ensure_cache_initialized()
         logger.info("Cache service initialized")
         
         # 启动时预热缓存

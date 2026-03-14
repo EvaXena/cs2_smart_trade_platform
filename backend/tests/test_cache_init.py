@@ -25,7 +25,16 @@ class TestMemoryCache:
     @pytest.fixture
     def cache(self):
         """创建内存缓存实例"""
-        return MemoryCache(max_size=100)
+        # 禁用随机抖动以确保测试稳定性
+        from app.services.cache import CacheEntry
+        original_jitter = CacheEntry._enable_jitter
+        CacheEntry.set_jitter_enabled(False)
+        
+        cache = MemoryCache(max_size=100)
+        
+        # 测试完成后恢复原始设置
+        yield cache
+        CacheEntry.set_jitter_enabled(original_jitter)
     
     def test_set_and_get(self, cache):
         """测试设置和获取缓存"""
@@ -114,6 +123,8 @@ class TestCacheManager:
         await manager.initialize()
         
         assert manager.backend == CacheBackend.MEMORY
+        # 清理后台任务
+        await manager.shutdown()
     
     @pytest.mark.asyncio
     async def test_set_and_get(self):
@@ -125,6 +136,8 @@ class TestCacheManager:
         result = manager.get("key1")
         
         assert result == "value1"
+        # 清理后台任务
+        await manager.shutdown()
     
     @pytest.mark.asyncio
     async def test_delete(self):
@@ -137,6 +150,8 @@ class TestCacheManager:
         
         assert result is True
         assert manager.get("key1") is None
+        # 清理后台任务
+        await manager.shutdown()
     
     @pytest.mark.asyncio
     async def test_get_stats(self):
@@ -151,6 +166,8 @@ class TestCacheManager:
         
         assert stats["backend"] == "memory"
         assert stats["total_keys"] == 1
+        # 清理后台任务
+        await manager.shutdown()
 
 
 class TestCacheInitialization:
@@ -175,6 +192,8 @@ class TestCacheInitialization:
         
         assert cache is not None
         assert is_cache_initialized() is True
+        # 清理后台任务
+        await cache.shutdown()
     
     @pytest.mark.asyncio
     async def test_ensure_cache_initialized(self):
@@ -188,10 +207,38 @@ class TestCacheInitialization:
         
         assert cache is not None
         assert is_cache_initialized() is True
+        # 清理后台任务
+        await cache.shutdown()
     
     def test_get_cache_returns_same_instance(self):
         """测试get_cache返回同一实例"""
+        # 先禁用随机抖动以确保测试稳定性
+        from app.services.cache import CacheEntry
+        original_jitter = CacheEntry._enable_jitter
+        CacheEntry.set_jitter_enabled(False)
+        
         cache1 = get_cache()
         cache2 = get_cache()
         
         assert cache1 is cache2
+        
+        # 恢复原始设置
+        CacheEntry.set_jitter_enabled(original_jitter)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_global_cache():
+    """在测试会话结束时清理全局缓存"""
+    yield
+    # 测试结束后清理全局缓存的后台任务
+    import app.services.cache as cache_module
+    if cache_module._cache is not None:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(cache_module._cache.shutdown())
+            else:
+                asyncio.run(cache_module._cache.shutdown())
+        except Exception:
+            pass
+        CacheEntry.set_jitter_enabled(original_jitter)

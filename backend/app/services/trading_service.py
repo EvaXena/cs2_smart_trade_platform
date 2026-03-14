@@ -89,6 +89,12 @@ class TradingEngine:
                 self._item_locks[item_id] = asyncio.Lock()
             return self._item_locks[item_id]
     
+    async def _remove_task(self, task_key: str) -> None:
+        """移除已完成的任务引用"""
+        async with self._tasks_lock:
+            if task_key in self._active_tasks:
+                del self._active_tasks[task_key]
+    
     async def _send_webhook_notification(
         self,
         event_type: WebhookEventType,
@@ -98,8 +104,8 @@ class TradingEngine:
     ) -> None:
         """发送 Webhook 通知（异步，不阻塞主流程）"""
         try:
-            # 异步发送，不等待结果
-            asyncio.create_task(
+            # 异步发送，不等待结果，保存任务引用以便管理
+            task = asyncio.create_task(
                 webhook_manager.send_webhook(
                     event_type=event_type,
                     data=data,
@@ -107,6 +113,27 @@ class TradingEngine:
                     order_id=order_id
                 )
             )
+            # 保存任务引用到 _active_tasks（使用唯一键标识）
+            task_key = f"webhook_{event_type.value}_{order_id}_{user_id}"
+            async with self._tasks_lock:
+                self._active_tasks[task_key] = task
+            # 任务完成后自动清理引用（使用同步回调避免 RuntimeWarning）
+            def cleanup_callback(t: asyncio.Task) -> None:
+                """同步回调函数，用于清理任务引用"""
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 在已运行的事件循环中调度异步清理
+                        loop.call_soon_threadsafe(
+                            lambda: asyncio.create_task(self._remove_task(task_key))
+                        )
+                    else:
+                        # 事件循环未运行，直接清理
+                        asyncio.run(self._remove_task(task_key))
+                except RuntimeError:
+                    # 事件循环不可用，忽略
+                    pass
+            task.add_done_callback(cleanup_callback)
         except Exception as e:
             # Webhook 失败不应影响主流程
             logger.warning(f"Failed to send webhook notification: {e}")

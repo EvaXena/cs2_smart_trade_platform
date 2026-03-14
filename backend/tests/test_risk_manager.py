@@ -156,7 +156,7 @@ class TestRiskManager:
     @pytest.mark.asyncio
     async def test_check_daily_limit_pass(self, risk_manager):
         """测试每日限额检查 - 通过"""
-        with patch.object(risk_manager, '_get_daily_trade_amount', return_value=0):
+        with patch.object(risk_manager, '_get_daily_trade_amount', new_callable=AsyncMock, return_value=0):
             passed, event = await risk_manager._check_daily_limit(
                 user_id=123,
                 amount=1000.0
@@ -171,7 +171,7 @@ class TestRiskManager:
         # 设置每日限额为1000
         risk_manager._rules["daily_limit"].max_daily_trade_amount = 1000.0
         
-        with patch.object(risk_manager, '_get_daily_trade_amount', return_value=500.0):
+        with patch.object(risk_manager, '_get_daily_trade_amount', new_callable=AsyncMock, return_value=500.0):
             passed, event = await risk_manager._check_daily_limit(
                 user_id=123,
                 amount=600.0
@@ -189,8 +189,8 @@ class TestRiskManager:
         risk_manager._rules["stop_loss"].stop_loss_percent = 10.0
         
         # 模拟持仓成本价为100，当前价格为85（亏损15%）
-        with patch.object(risk_manager, '_get_user_position', return_value={"quantity": 1, "avg_price": 85}):
-            with patch.object(risk_manager, '_get_cost_basis', return_value=100.0):
+        with patch.object(risk_manager, '_get_user_position', new_callable=AsyncMock, return_value={"quantity": 1, "avg_price": 85}):
+            with patch.object(risk_manager, '_get_cost_basis', new_callable=AsyncMock, return_value=100.0):
                 passed, event = await risk_manager._check_stop_loss(
                     user_id=123,
                     item_id=456,
@@ -209,8 +209,8 @@ class TestRiskManager:
         risk_manager._rules["stop_loss"].stop_loss_percent = 10.0
         
         # 模拟持仓成本价为100，当前价格为95（亏损5%，未达到止损）
-        with patch.object(risk_manager, '_get_user_position', return_value={"quantity": 1, "avg_price": 95}):
-            with patch.object(risk_manager, '_get_cost_basis', return_value=100.0):
+        with patch.object(risk_manager, '_get_user_position', new_callable=AsyncMock, return_value={"quantity": 1, "avg_price": 95}):
+            with patch.object(risk_manager, '_get_cost_basis', new_callable=AsyncMock, return_value=100.0):
                 passed, event = await risk_manager._check_stop_loss(
                     user_id=123,
                     item_id=456,
@@ -227,8 +227,8 @@ class TestRiskManager:
         risk_manager._rules["take_profit"].take_profit_percent = 30.0
         
         # 模拟持仓成本价为100，当前价格为135（盈利35%）
-        with patch.object(risk_manager, '_get_user_position', return_value={"quantity": 1, "avg_price": 135}):
-            with patch.object(risk_manager, '_get_cost_basis', return_value=100.0):
+        with patch.object(risk_manager, '_get_user_position', new_callable=AsyncMock, return_value={"quantity": 1, "avg_price": 135}):
+            with patch.object(risk_manager, '_get_cost_basis', new_callable=AsyncMock, return_value=100.0):
                 passed, event = await risk_manager._check_take_profit(
                     user_id=123,
                     item_id=456,
@@ -246,8 +246,8 @@ class TestRiskManager:
         risk_manager._rules["concentration"].max_position_concentration = 0.3
         
         # 模拟总持仓1000，新持仓100，占比9%（未超过30%）
-        with patch.object(risk_manager, '_get_total_position', return_value=1000.0):
-            with patch.object(risk_manager, '_get_item_position', return_value=0.0):
+        with patch.object(risk_manager, '_get_total_position', new_callable=AsyncMock, return_value=1000.0):
+            with patch.object(risk_manager, '_get_item_position', new_callable=AsyncMock, return_value=0.0):
                 passed, event = await risk_manager._check_concentration_risk(
                     user_id=123,
                     item_id=456,
@@ -263,8 +263,8 @@ class TestRiskManager:
         risk_manager._rules["concentration"].max_position_concentration = 0.3
         
         # 模拟总持仓1000，新持仓400，占比40%（超过30%）
-        with patch.object(risk_manager, '_get_total_position', return_value=1000.0):
-            with patch.object(risk_manager, '_get_item_position', return_value=300.0):
+        with patch.object(risk_manager, '_get_total_position', new_callable=AsyncMock, return_value=1000.0):
+            with patch.object(risk_manager, '_get_item_position', new_callable=AsyncMock, return_value=300.0):
                 passed, event = await risk_manager._check_concentration_risk(
                     user_id=123,
                     item_id=456,
@@ -283,16 +283,51 @@ class TestRiskManager:
         risk_manager._rules["single_trade"].max_single_trade = 10000.0
         risk_manager._rules["daily_limit"].max_daily_trade_amount = 50000.0
         
-        with patch.object(risk_manager, '_get_daily_trade_amount', return_value=0.0):
-            with patch.object(risk_manager, '_get_total_position', return_value=0.0):
-                with patch.object(risk_manager, '_get_item_position', return_value=0.0):
-                    passed, events = await risk_manager.check_trade_risk(
-                        user_id=123,
-                        item_id=456,
-                        price=100.0,
-                        quantity=1,
-                        side="buy"
-                    )
+        # 获取检查器并 mock 它们的异步方法
+        price_checker = risk_manager.checkers.get("price_deviation")
+        wash_checker = risk_manager.checkers.get("wash_trade")
+        hf_checker = risk_manager.checkers.get("high_frequency")
+        
+        with patch.object(risk_manager, '_get_daily_trade_amount', new_callable=AsyncMock, return_value=0.0):
+            with patch.object(risk_manager, '_get_total_position', new_callable=AsyncMock, return_value=0.0):
+                with patch.object(risk_manager, '_get_item_position', new_callable=AsyncMock, return_value=0.0):
+                    if price_checker:
+                        with patch.object(price_checker, '_get_market_price', new_callable=AsyncMock, return_value=100.0):
+                            if wash_checker:
+                                with patch.object(wash_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=3):
+                                    if hf_checker:
+                                        with patch.object(hf_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=3):
+                                            passed, events = await risk_manager.check_trade_risk(
+                                                user_id=123,
+                                                item_id=456,
+                                                price=100.0,
+                                                quantity=1,
+                                                side="buy"
+                                            )
+                                    else:
+                                        passed, events = await risk_manager.check_trade_risk(
+                                            user_id=123,
+                                            item_id=456,
+                                            price=100.0,
+                                            quantity=1,
+                                            side="buy"
+                                        )
+                            else:
+                                passed, events = await risk_manager.check_trade_risk(
+                                    user_id=123,
+                                    item_id=456,
+                                    price=100.0,
+                                    quantity=1,
+                                    side="buy"
+                                )
+                    else:
+                        passed, events = await risk_manager.check_trade_risk(
+                            user_id=123,
+                            item_id=456,
+                            price=100.0,
+                            quantity=1,
+                            side="buy"
+                        )
                     
                     # 应该通过检查
                     assert passed is True
@@ -304,10 +339,10 @@ class TestRiskManager:
         risk_manager._rules["stop_loss"].stop_loss_percent = 10.0
         risk_manager._rules["single_trade"].max_single_trade = 10000.0
         
-        with patch.object(risk_manager, '_get_total_position', return_value=100.0):
-            with patch.object(risk_manager, '_get_daily_trade_amount', return_value=0.0):
-                with patch.object(risk_manager, '_get_user_position', return_value={"quantity": 1, "avg_price": 85.0}):
-                    with patch.object(risk_manager, '_get_cost_basis', return_value=100.0):
+        with patch.object(risk_manager, '_get_total_position', new_callable=AsyncMock, return_value=100.0):
+            with patch.object(risk_manager, '_get_daily_trade_amount', new_callable=AsyncMock, return_value=0.0):
+                with patch.object(risk_manager, '_get_user_position', new_callable=AsyncMock, return_value={"quantity": 1, "avg_price": 85.0}):
+                    with patch.object(risk_manager, '_get_cost_basis', new_callable=AsyncMock, return_value=100.0):
                         passed, events = await risk_manager.check_trade_risk(
                             user_id=123,
                             item_id=456,
@@ -323,8 +358,8 @@ class TestRiskManager:
     async def test_check_position_risk(self, risk_manager):
         """测试持仓风险检查"""
         # 模拟有持仓
-        with patch.object(risk_manager, '_get_user_position', return_value={"quantity": 2, "avg_price": 100.0}):
-            with patch.object(risk_manager, '_get_cost_basis', return_value=100.0):
+        with patch.object(risk_manager, '_get_user_position', new_callable=AsyncMock, return_value={"quantity": 2, "avg_price": 100.0}):
+            with patch.object(risk_manager, '_get_cost_basis', new_callable=AsyncMock, return_value=100.0):
                 result = await risk_manager.check_position_risk(
                     user_id=123,
                     item_id=456
@@ -338,7 +373,7 @@ class TestRiskManager:
     @pytest.mark.asyncio
     async def test_check_position_risk_no_position(self, risk_manager):
         """测试持仓风险检查 - 无持仓"""
-        with patch.object(risk_manager, '_get_user_position', return_value=None):
+        with patch.object(risk_manager, '_get_user_position', new_callable=AsyncMock, return_value=None):
             result = await risk_manager.check_position_risk(
                 user_id=123,
                 item_id=456
@@ -447,7 +482,7 @@ class TestPriceDeviationChecker:
     @pytest.mark.asyncio
     async def test_price_checker_no_market_price(self, price_checker):
         # 模拟无市场价格
-        with patch.object(price_checker, '_get_market_price', return_value=None):
+        with patch.object(price_checker, '_get_market_price', new_callable=AsyncMock, return_value=None):
             passed, event = await price_checker.check(
                 user_id=123,
                 item_id=456,
@@ -458,7 +493,7 @@ class TestPriceDeviationChecker:
     @pytest.mark.asyncio
     async def test_price_checker_deviation_exceeds_threshold(self, price_checker):
         # 模拟市场价格为100，提议价格200（偏离100%）
-        with patch.object(price_checker, '_get_market_price', return_value=100.0):
+        with patch.object(price_checker, '_get_market_price', new_callable=AsyncMock, return_value=100.0):
             passed, event = await price_checker.check(
                 user_id=123,
                 item_id=456,
@@ -471,7 +506,7 @@ class TestPriceDeviationChecker:
     @pytest.mark.asyncio
     async def test_price_checker_deviation_within_threshold(self, price_checker):
         # 模拟市场价格为100，提议价格105（偏离5%）
-        with patch.object(price_checker, '_get_market_price', return_value=100.0):
+        with patch.object(price_checker, '_get_market_price', new_callable=AsyncMock, return_value=100.0):
             passed, event = await price_checker.check(
                 user_id=123,
                 item_id=456,
@@ -513,14 +548,14 @@ class TestWashTradeChecker:
     @pytest.mark.asyncio
     async def test_wash_checker_normal_trades(self, wash_checker):
         # 模拟正常交易次数
-        with patch.object(wash_checker, '_get_recent_trade_count', return_value=5):
+        with patch.object(wash_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=5):
             passed, event = await wash_checker.check(user_id=123)
             assert passed is True
     
     @pytest.mark.asyncio
     async def test_wash_checker_wash_trade_detected(self, wash_checker):
         # 模拟刷单（超过max_trades）
-        with patch.object(wash_checker, '_get_recent_trade_count', return_value=15):
+        with patch.object(wash_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=15):
             passed, event = await wash_checker.check(user_id=123)
             assert passed is False
             assert event is not None
@@ -560,14 +595,14 @@ class TestHighFrequencyChecker:
     @pytest.mark.asyncio
     async def test_hf_checker_normal_trades(self, hf_checker):
         # 模拟正常交易次数
-        with patch.object(hf_checker, '_get_recent_trade_count', return_value=3):
+        with patch.object(hf_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=3):
             passed, event = await hf_checker.check(user_id=123)
             assert passed is True
     
     @pytest.mark.asyncio
     async def test_hf_checker_high_frequency_detected(self, hf_checker):
         # 模拟高频交易（超过max_trades）
-        with patch.object(hf_checker, '_get_recent_trade_count', return_value=10):
+        with patch.object(hf_checker, '_get_recent_trade_count', new_callable=AsyncMock, return_value=10):
             passed, event = await hf_checker.check(user_id=123)
             assert passed is False
             assert event is not None
